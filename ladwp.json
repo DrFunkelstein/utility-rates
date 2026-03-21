@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "utility": "LADWP",
+  "electric": {
+    "tier1": 0.30,
+    "tier2": 0.34,
+    "tier3": 0.42,
+    "highPeak": 0,
+    "lowPeak": 0,
+    "baseKwh": 0
+    "
+  },
+  "water": {
+    "tier1": 1.20,
+    "tier2": 2.10,
+    "tier3": 0,
+    "tier4": 0
+  },
+
+  "trash": {
+    "flatRate": 55.95
+  }
+}

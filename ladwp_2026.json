@@ -1,6 +1,7 @@
 {
   "version": 1,
   "utility": "LADWP",
+  "lastUpdated": "2026-03-21",
 
   "periods": {
     "jan_mar": [1, 2, 3],

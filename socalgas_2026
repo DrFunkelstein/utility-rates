@@ -1,0 +1,13 @@
+{
+  "lastUpdated": "2026-04-12",
+  "winter": {
+    "zone1": { "tier1": 1.552, "tier2": 2.105, "allowance": 0.521 },
+    "zone2": { "tier1": 1.552, "tier2": 2.105, "allowance": 0.634 },
+    "zone3": { "tier1": 1.552, "tier2": 2.105, "allowance": 0.822 }
+  },
+  "summer": {
+    "zone1": { "tier1": 1.451, "tier2": 1.954, "allowance": 0.493 },
+    "zone2": { "tier1": 1.451, "tier2": 1.954, "allowance": 0.512 },
+    "zone3": { "tier1": 1.451, "tier2": 1.954, "allowance": 0.584 }
+  }
+}

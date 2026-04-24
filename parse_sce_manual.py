@@ -13,14 +13,21 @@ def normalize(text):
     return re.sub(r'\s+', '', text).upper()
 
 def extract_from_raw_text(text):
-    found_data = {}
+    # Dictionary to hold the full nested structure
+    found_data = {
+        "TOU-D-4": {"summer": {}, "winter": {}},
+        "TOU-D-5": {"summer": {}, "winter": {}},
+        "PRIME": {"summer": {}, "winter": {}},
+        "Domestic": {"summer": {}, "winter": {}}
+    }
+    
+    fixed_values = {}
     lines = text.split('\n')
     
     current_plan = None
-    saw_summer_header = False
+    current_season = None
     completed_plans = set()
     
-    # Precise Spaceless Targets
     plan_targets = {
         "TOU-D-4": "OPTION4-9PM",
         "TOU-D-5": "OPTION5-8PM",
@@ -28,83 +35,67 @@ def extract_from_raw_text(text):
         "Domestic": "SCHEDULED"
     }
 
-    print(f"DEBUG: Processing {len(lines)} lines...")
+    # Map the text labels to our JSON keys
+    bucket_map = {
+        "ON-PEAK": "onPeak",
+        "MID-PEAK": "midPeak",
+        "OFF-PEAK": "offPeak",
+        "SUPER-OFF-PEAK": "superOffPeak"
+    }
 
     for line in lines:
         clean_line = line.strip()
         if not clean_line: continue
         norm = normalize(clean_line)
 
-        # 1. DETECT THE ACTUAL TABLE START
-        # We only set current_plan if we see the plan name AND it looks like a table header
-        # Table headers usually have 'TOTAL' or 'GENERATION' on the same or nearby lines
+        # 1. CAPTURE GLOBAL FIXED CHARGES
+        if "BASESERVICESCHARGE" in norm and "METER" in norm and "DAILY" not in fixed_values:
+            m = re.search(r"(\d+\.\d{3})", clean_line)
+            if m: fixed_values["dailyCharge"] = float(m.group(1))
+
+        if "BASELINECREDIT" in norm and "CREDIT" not in fixed_values:
+            m = re.search(r"(\d+\.\d{5})", clean_line)
+            if m: fixed_values["baselineCredit"] = float(m.group(1))
+
+        # 2. DETECT THE ACTUAL TABLE START
         for plan_id, target in plan_targets.items():
             if target in norm and plan_id not in completed_plans:
-                # Filter out sentences: "Available as an option to...", "Eligibility for...", etc.
-                if any(x in norm for x in ["AVAILABLE", "ELIGIB", "PURSUANT", "CANCELLING", "REVISED"]):
-                    continue
+                if any(x in norm for x in ["AVAILABLE", "ELIGIB", "PURSUANT", "CANCELLING"]): continue
+                if plan_id == "Domestic" and "TOU" in norm: continue
                 
-                # Special check for Domestic vs TOU-D
-                if plan_id == "Domestic" and "TOU" in norm:
-                    continue
-
                 current_plan = plan_id
-                saw_summer_header = False
-                print(f"DEBUG: Entering Table Area for {current_plan}")
+                current_season = None 
+                print(f"DEBUG: >>> Entering Matrix for {current_plan}")
 
-        if not current_plan:
-            continue
+        if not current_plan: continue
 
-        # 2. TRACK SEASONAL CONTEXT
-        # If we see "Summer", we start looking for "On-Peak"
+        # 3. TRACK SEASONAL CONTEXT
         if "SUMMER" in norm:
-            saw_summer_header = True
-            print(f"   ...Found Summer header for {current_plan}")
-        
-        # If we see "Winter", we stop looking for Summer On-Peak for this plan
-        if "WINTER" in norm and saw_summer_header:
-            print(f"   ...Hit Winter, abandoning search for {current_plan}")
-            current_plan = None
-            saw_summer_header = False
-            continue
+            current_season = "summer"
+        elif "WINTER" in norm:
+            current_season = "winter"
 
-        # 3. MATCH THE RATE ROW
-        is_rate_row = False
+        # 4. MATCH THE RATE ROWS
         if current_plan == "Domestic":
-            # Schedule D matches 'Baseline Usage'
             if "BASELINE" in norm and "USAGE" in norm:
-                is_rate_row = True
+                rates = re.findall(r"(\d+\.\d{5})", clean_line)
+                if rates:
+                    # Domestic usually has one total rate at the end
+                    val = float(rates[-1])
+                    found_data["Domestic"]["summer"]["tier1"] = val
+                    found_data["Domestic"]["winter"]["tier1"] = val
+                    completed_plans.add("Domestic")
         else:
-            # TOU matches 'On-Peak' only if we've seen a Summer header recently
-            if "ON-PEAK" in norm and saw_summer_header:
-                is_rate_row = True
+            # Check for specific buckets (On, Mid, Off, Super)
+            for label, json_key in bucket_map.items():
+                if label in norm and current_season:
+                    rates = re.findall(r"(\d+\.\d{5})", clean_line)
+                    if len(rates) >= 2:
+                        total = round(float(rates[0]) + float(rates[1]), 5)
+                        found_data[current_plan][current_season][json_key] = total
+                        print(f"   MATCH: {current_plan} {current_season} {json_key} -> ${total}")
 
-        if is_rate_row:
-            # Find all 5-decimal numbers
-            rates = re.findall(r"(\d+\.\d{5})", clean_line)
-            
-            if len(rates) >= 2:
-                # Delivery (0) + Generation (1)
-                delivery = float(rates[0])
-                generation = float(rates[1])
-                total = round(delivery + generation, 5)
-                
-                found_data[current_plan] = total
-                print(f"   >> SUCCESS: {current_plan} = ${total} ({delivery} + {generation})")
-                
-                completed_plans.add(current_plan)
-                current_plan = None # Reset to look for next table
-                saw_summer_header = False
-            elif current_plan == "Domestic" and len(rates) == 1:
-                # Backup for single-column Schedule D
-                val = float(rates[0])
-                found_data[current_plan] = val
-                print(f"   >> SUCCESS: {current_plan} = ${val}")
-                completed_plans.add(current_plan)
-                current_plan = None
-                saw_summer_header = False
-
-    return found_data
+    return found_data, fixed_values
 
 def main():
     parser = argparse.ArgumentParser()
@@ -115,12 +106,13 @@ def main():
     files = [f for f in os.listdir(UPLOAD_FOLDER) if f.endswith((".pdf", ".txt"))]
     
     if not files:
-        print("No files found. Upload to 'sce_uploads'.")
+        print("No files found.")
         sys.exit(0)
 
-    all_results = {}
+    full_matrix = {}
+    all_fixed = {}
+
     for filename in files:
-        print(f"\n--- Checking File: {filename} ---")
         path = os.path.join(UPLOAD_FOLDER, filename)
         if filename.endswith(".pdf"):
             with pdfplumber.open(path) as pdf:
@@ -128,26 +120,35 @@ def main():
         else:
             with open(path, 'r', encoding='utf-8') as f: content = f.read()
         
-        all_results.update(extract_from_raw_text(content))
-
-    if not all_results:
-        print("\nFAILURE: No rates matched.")
-        sys.exit(1)
+        rates, fixed = extract_from_raw_text(content)
+        # Deep merge rates
+        for plan, seasons in rates.items():
+            if plan not in full_matrix: full_matrix[plan] = seasons
+            else:
+                for season, buckets in seasons.items():
+                    full_matrix[plan][season].update(buckets)
+        all_fixed.update(fixed)
 
     if args.dry_run:
-        print("\n--- DRY RUN RESULTS ---")
-        for k, v in all_results.items(): print(f"{k}: ${v}")
+        print("\n--- FINAL DRY RUN RESULTS ---")
+        print(json.dumps(full_matrix, indent=2))
+        print("Fixed Charges:", all_fixed)
         sys.exit(0)
 
-    # Save to JSON
+    # Committing to JSON
     try:
         with open(JSON_FILE, 'r') as f: data = json.load(f)
-        for pid, val in all_results.items():
-            if pid == "Domestic": data["plans"]["Domestic"]["summer"]["tier1"] = val
-            else: data["plans"][pid]["summer"]["onPeak"] = val
+        
+        if "dailyCharge" in all_fixed: data["fixed"]["dailyCharge"] = all_fixed["dailyCharge"]
+        if "baselineCredit" in all_fixed: data["fixed"]["baselineCredit"] = all_fixed["baselineCredit"]
+            
+        for pid, seasons in full_matrix.items():
+            if seasons["summer"] or seasons["winter"]:
+                data["plans"][pid] = seasons
+
         data["lastUpdated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
         with open(JSON_FILE, 'w') as f: json.dump(data, f, indent=2)
-        print("\nSUCCESS: JSON updated.")
+        print(f"\nSUCCESS: Full matrix updated in {JSON_FILE}")
     except Exception as e:
         print(f"Error: {e}"); sys.exit(1)
 

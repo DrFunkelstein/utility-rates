@@ -26,7 +26,7 @@ VALID_BUCKETS = {
         "winter": ["midPeak", "offPeak", "superOffPeak"]
     },
     "Domestic": {
-        "summer": ["tier1", "tier2"]
+        "summer": ["tier1", "tier2"],
         "winter": ["tier1", "tier2"] 
     }
 }

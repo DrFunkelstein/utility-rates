@@ -9,120 +9,93 @@ WATER_URL = "https://www.ladwp.com/account/customer-service/water-rates/schedule
 
 def get_current_period():
     month = datetime.now().month
-    if 1 <= month <= 3: return "janMar"
-    if 4 <= month <= 5: return "aprMay"
-    if month == 6: return "june"
-    if 7 <= month <= 9: return "julSep"
-    return "octDec"
+    if 1 <= month <= 3: return "janMar", "January - March"
+    if 4 <= month <= 5: return "aprMay", "April - May"
+    if month == 6: return "june", "June"
+    if 7 <= month <= 9: return "julSep", "July - September"
+    return "octDec", "October - December"
 
-def extract_rate(text):
-    # Aggressive search for numbers like 0.12345 or $0.12345
-    # Look for a decimal starting with 0 or just the decimal point
-    match = re.search(r"(\d?\.\d{3,6})", text)
+def extract_all_rates(text, marker, count=3):
+    # Finds the marker (e.g. 'April - May') and extracts the next 'count' decimal numbers
+    # Pattern looks for numbers like 0.12345 or 12.345
+    pattern = rf"{re.escape(marker)}\s*" + r"\s*".join([r"(\d+\.\d+)"] * count)
+    match = re.search(pattern, text)
     if match:
-        val = float(match.group(1))
-        # Logic check: Rates are rarely above $0.80 for LADWP
-        return val if val < 0.85 else None
+        return [float(g) for g in match.groups()]
     return None
 
-def scrape_electric():
-    print("--- Scraping Electric Rates ---")
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    response = requests.get(ELECTRIC_URL, headers=headers)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
-    results = {"standard": None, "tou": None}
-    
-    # LADWP Electric Logic: We look for rows that contain labels and values
-    rows = soup.find_all('tr')
-    
-    standard_rates = {}
-    tou_rates = {}
+def scrape_data():
+    headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
+    period_key, site_marker = get_current_period()
+    print(f"Targeting Period: {period_key} (Searching for '{site_marker}')")
 
-    for row in rows:
-        cells = row.find_all(['td', 'th'])
-        if len(cells) < 2: continue
-        
-        label = cells[0].get_text(strip=True)
-        # Search the text of the entire row for the value
-        value_text = " ".join([c.get_text(strip=True) for c in cells[1:]])
-        rate = extract_rate(value_text)
+    results = {"standard": None, "tou": None, "water": None}
 
-        if not rate: continue
+    # 1. SCRAPE ELECTRIC
+    try:
+        e_resp = requests.get(ELECTRIC_URL, headers=headers, timeout=15)
+        e_text = e_resp.text.replace('&nbsp;', ' ')
+        soup_e = BeautifulSoup(e_text, 'html.parser')
+        full_text_e = soup_e.get_text(separator=' ')
 
-        # Standard R-1A Mapping
-        if "Tier 1" in label and "usage" in label.lower(): standard_rates["tier1"] = rate
-        elif "Tier 2" in label and "usage" in label.lower(): standard_rates["tier2"] = rate
-        elif "Tier 3" in label and "usage" in label.lower(): standard_rates["tier3"] = rate
+        # Find R-1A section
+        if "R-1A" in full_text_e:
+            rates = extract_all_rates(full_text_e, site_marker, 3)
+            if rates:
+                results["standard"] = {"tier1": rates[0], "tier2": rates[1], "tier3": rates[2]}
+                print(f"Found Standard Rates: {rates}")
 
-        # TOU R-1B Mapping
-        if "High-Peak" in label: tou_rates["tier1"] = rate
-        elif "Low-Peak" in label: tou_rates["tier2"] = rate
-        elif "Base" in label and "Period" in label: tou_rates["tier3"] = rate
+        # Find R-1B section
+        if "R-1B" in full_text_e:
+            # We look specifically after the R-1B header to avoid double-matching Standard
+            tou_section = full_text_e.split("R-1B")[1]
+            rates = extract_all_rates(tou_section, site_marker, 3)
+            if rates:
+                results["tou"] = {"tier1": rates[0], "tier2": rates[1], "tier3": rates[2]}
+                print(f"Found TOU Rates: {rates}")
+    except Exception as e:
+        print(f"Electric Scrape Error: {e}")
 
-    if len(standard_rates) >= 2: 
-        results["standard"] = standard_rates
-        print(f"Captured Standard: {standard_rates}")
-    
-    if len(tou_rates) >= 2: 
-        results["tou"] = tou_rates
-        print(f"Captured TOU: {tou_rates}")
-        
-    return results
+    # 2. SCRAPE WATER
+    try:
+        w_resp = requests.get(WATER_URL, headers=headers, timeout=15)
+        w_text = w_resp.text.replace('&nbsp;', ' ')
+        soup_w = BeautifulSoup(w_text, 'html.parser')
+        full_text_w = soup_w.get_text(separator=' ')
 
-def scrape_water():
-    print("\n--- Scraping Water Rates ---")
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    response = requests.get(WATER_URL, headers=headers)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
-    w_rates = []
-    # Water rates are usually in a table where Tier is in column 1
-    rows = soup.find_all('tr')
-    for row in rows:
-        cells = row.find_all(['td', 'th'])
-        if len(cells) < 2: continue
-        
-        row_text = row.get_text(separator=' ', strip=True)
-        if "Tier" in row_text:
-            rate = extract_rate(row_text)
-            if rate and rate > 1.0: # Water rates are > $1.00 (per HCF)
-                w_rates.append(rate)
-                print(f"Found Water Tier {len(w_rates)}: {rate}")
+        # Water period is wider (Jan-Jun or Jul-Dec)
+        water_marker = "January - June" if datetime.now().month <= 6 else "July - December"
+        w_rates = extract_all_rates(full_text_w, water_marker, 4)
+        if w_rates:
+            results["water"] = {"tier1": w_rates[0], "tier2": w_rates[1], "tier3": w_rates[2], "tier4": w_rates[3]}
+            print(f"Found Water Rates for {water_marker}: {w_rates}")
+    except Exception as e:
+        print(f"Water Scrape Error: {e}")
 
-    if len(w_rates) >= 3:
-        return {
-            "tier1": w_rates[0],
-            "tier2": w_rates[1],
-            "tier3": w_rates[2],
-            "tier4": w_rates[3] if len(w_rates) > 3 else w_rates[-1]
-        }
-    return None
+    return results, period_key
 
 def main():
     try:
         with open('ladwp_2026.json', 'r') as f:
             data = json.load(f)
     except Exception as e:
-        print(f"Critical Error: {e}")
+        print(f"Critical JSON Load Error: {e}")
         return
 
-    period = get_current_period()
-    print(f"Targeting Period: {period}")
-
-    new_e = scrape_electric()
-    new_w = scrape_water()
+    new_data, period = scrape_data()
     updated = False
 
-    # Update only if valid data was found
-    if new_e["standard"]:
-        data["electric"]["standard"][period] = new_e["standard"]
+    if new_data["standard"]:
+        data["electric"]["standard"][period] = new_data["standard"]
         updated = True
-    if new_e["tou"]:
-        data["electric"]["tou"][period] = new_e["tou"]
+    if new_data["tou"]:
+        data["electric"]["tou"][period] = new_data["tou"]
         updated = True
-    if new_w:
-        data["water"][period] = new_w
+    if new_data["water"]:
+        # Update water for current and all sub-periods in that half-year
+        sub_periods = ["janMar", "aprMay", "june"] if datetime.now().month <= 6 else ["julSep", "octDec"]
+        for p in sub_periods:
+            data["water"][p] = new_data["water"]
         updated = True
 
     if updated:
@@ -130,9 +103,9 @@ def main():
         data["version"] = data.get("version", 1) + 1
         with open('ladwp_2026.json', 'w') as f:
             json.dump(data, f, indent=2)
-        print(f"\nSUCCESS: Data updated for {period}")
+        print(f"\nSUCCESS: Data committed to JSON for period: {period}")
     else:
-        print("\nFAILED: No data was captured. Ensure URLs are correct or site hasn't changed.")
+        print("\nFAILED: No data was matched. The site text format may have changed.")
 
 if __name__ == "__main__":
     main()

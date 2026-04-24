@@ -26,8 +26,8 @@ VALID_BUCKETS = {
         "winter": ["midPeak", "offPeak", "superOffPeak"]
     },
     "Domestic": {
-        "summer": ["tier1"],
-        "winter": ["tier1"]
+        "summer": ["tier1", "tier2"]
+        "winter": ["tier1", "tier2"] 
     }
 }
 
@@ -93,12 +93,20 @@ def extract_from_raw_text(text):
         # 4. RATE EXTRACTION WITH VALIDATION
         if current_plan == "Domestic":
             lock_key = "DOMESTIC_BASELINE"
-            if "BASELINE" in norm and "USAGE" in norm and lock_key not in locked_bins:
+            if "BASELINE" in norm and "USAGE" in norm and "OVER" not in norm:
                 rates = re.findall(r"(\d+\.\d{5})", clean_line)
                 if rates:
-                    found_data["Domestic"]["summer"]["tier1"] = float(rates[-1])
-                    found_data["Domestic"]["winter"]["tier1"] = float(rates[-1])
-                    locked_bins.add(lock_key)
+                    val = float(rates[-1])
+                    found_data["Domestic"]["summer"]["tier1"] = val
+                    found_data["Domestic"]["winter"]["tier1"] = val
+                    print(f"   >> MATCH: Domestic Tier 1 -> ${val}")
+            if "OVER" in norm and "BASELINE" in norm:
+                rates = re.findall(r"(\d+\.\d{5})", clean_line)
+                if rates:
+                    val = float(rates[-1])
+                    found_data["Domestic"]["summer"]["tier2"] = val
+                    found_data["Domestic"]["winter"]["tier2"] = val
+                    print(f"   >> MATCH: Domestic Tier 2 -> ${val}")
         else:
             for label, json_key in bucket_order:
                 if label in norm and current_season:

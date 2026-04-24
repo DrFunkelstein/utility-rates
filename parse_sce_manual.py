@@ -30,6 +30,7 @@ VALID_BUCKETS = {
 }
 
 def normalize(text):
+    """Removes all whitespace and converts to uppercase for reliable matching."""
     return re.sub(r'\s+', '', text).upper()
 
 def extract_from_raw_text(text):
@@ -43,7 +44,7 @@ def extract_from_raw_text(text):
     fixed_values = {}
     lines = text.split('\n')
     current_plan, current_season = None, None
-    domestic_tier_context = None # Tracks if we are in Baseline vs Over Baseline
+    domestic_tier_context = None 
     locked_bins, locked_fixed = set(), set()
     
     plan_targets = {
@@ -65,7 +66,7 @@ def extract_from_raw_text(text):
         if not clean_line: continue
         norm = normalize(clean_line)
 
-        # 1. FIXED CHARGES (BSC and Baseline Credit)
+        # 1. FIXED CHARGES
         if "BASESERVICESCHARGE" in norm and "METER" in norm and "DAILY" not in locked_fixed:
             m = re.search(r"(\d+\.\d{3})", clean_line)
             if m: 
@@ -80,9 +81,7 @@ def extract_from_raw_text(text):
         # 2. PLAN DETECTION
         for plan_id, target in plan_targets.items():
             if target in norm and ("TOTAL1UG" in norm or "DELIVERYSERVICE" in norm or "DOMESTICSERVICE" in norm):
-                # Ensure 'Schedule D' doesn't accidentally trigger inside a TOU table
                 if plan_id == "Domestic" and "TOU" in norm: continue
-                
                 current_plan = plan_id
                 current_season = None 
                 domestic_tier_context = None
@@ -91,27 +90,3 @@ def extract_from_raw_text(text):
         if not current_plan: continue
 
         # 3. SEASON & TIER DETECTION
-        if "SUMMER" in norm: current_season = "summer"
-        elif "WINTER" in norm: current_season = "winter"
-
-        # Specific to Schedule D (Tiered)
-        if current_plan == "Domestic":
-            if "BASELINESERVICE" in norm and "OVER" not in norm:
-                domestic_tier_context = "tier1"
-            elif "OVERBASELINESERVICE" in norm:
-                domestic_tier_context = "tier2"
-
-        # 4. RATE EXTRACTION
-        if current_plan == "Domestic" and domestic_tier_context and current_season:
-            bin_key = f"DOM_{current_season}_{domestic_tier_context}"
-            if bin_key not in locked_bins:
-                rates = re.findall(r"(\d+\.\d{5})", clean_line)
-                if len(rates) >= 2:
-                    total = round(float(rates[0]) + float(rates[1]), 5)
-                    found_data["Domestic"][current_season][domestic_tier_context] = total
-                    locked_bins.add(bin_key)
-                    print(f"   >> MATCH: Domestic {current_season} {domestic_tier_context} -> ${total}")
-
-        elif current_plan != "Domestic":
-            for label, json_key in bucket_order:
-                if label in nor

@@ -1,13 +1,19 @@
 {
-  "lastUpdated": "2026-04-12",
-  "winter": {
-    "zone1": { "tier1": 1.552, "tier2": 2.105, "allowance": 0.521 },
-    "zone2": { "tier1": 1.552, "tier2": 2.105, "allowance": 0.634 },
-    "zone3": { "tier1": 1.552, "tier2": 2.105, "allowance": 0.822 }
+  "lastUpdated": "2026-04-24",
+  "procurement": 0.16863,
+  "transportation": {
+    "base": 1.11812,
+    "over": 1.45231
   },
-  "summer": {
-    "zone1": { "tier1": 1.451, "tier2": 1.954, "allowance": 0.493 },
-    "zone2": { "tier1": 1.451, "tier2": 1.954, "allowance": 0.512 },
-    "zone3": { "tier1": 1.451, "tier2": 1.954, "allowance": 0.584 }
+  "fixed": {
+    "customerCharge": 0.16438,
+    "ppps": 0.14503,
+    "regulatory": 0.00350,
+    "franchise": 0.035
+  },
+  "allowances": {
+    "zone1": { "winter": 0.521, "summer": 0.493 },
+    "zone2": { "winter": 0.634, "summer": 0.512 },
+    "zone3": { "winter": 0.822, "summer": 0.584 }
   }
 }

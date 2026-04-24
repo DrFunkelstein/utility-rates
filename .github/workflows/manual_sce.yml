@@ -1,13 +1,16 @@
 name: Manual SCE Update
 on:
-  push:
-    paths:
-      - 'sce_uploads/**.pdf'
-  workflow_dispatch: # Allow manual trigger
+  workflow_dispatch: # This creates the manual trigger button
+    inputs:
+      dry_run:
+        description: 'Dry Run (Test only, do not update JSON)'
+        required: true
+        type: boolean
+        default: true
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
@@ -17,9 +20,19 @@ jobs:
           python-version: '3.11'
       - name: Install Tools
         run: pip install pdfplumber
+      
       - name: Run Parser
-        run: python parse_sce_manual.py
+        # Pass the choice to the Python script
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            python parse_sce_manual.py --dry-run
+          else
+            python parse_sce_manual.py
+          fi
+
       - name: Commit and Clean Up
+        # Only runs if it was NOT a dry run and the script succeeded
+        if: github.event.inputs.dry_run == 'false'
         run: |
           git config --global user.name 'SCE-Manual-Bot'
           git config --global user.email 'bot@utility.com'

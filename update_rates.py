@@ -1,3 +1,4 @@
+import sys
 import requests
 from bs4 import BeautifulSoup
 import json
@@ -61,28 +62,38 @@ def scrape_table_block(soup, table_id_text, mapping, year_target="2026"):
     return results
 
 def main():
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}
     try:
         with open('ladwp_rates.json', 'r') as f:
             data = json.load(f)
     except Exception as e:
-        print(f"File Error: {e}")
-        return
+        print(f"Critical JSON Load Error: {e}")
+        sys.exit(1)
 
     current_year = str(datetime.now().year)
+    print(f"Targeting Year: {current_year}")
 
     # 1. SCRAPE ELECTRIC (5 periods)
-    e_soup = BeautifulSoup(requests.get(ELECTRIC_URL, headers=headers).text, 'html.parser')
+    e_resp = requests.get(ELECTRIC_URL, headers=headers, timeout=15)
+    e_soup = BeautifulSoup(e_resp.text, 'html.parser')
     r1a_data = scrape_table_block(e_soup, "R-1A", E_PERIOD_MAP, current_year)
     r1b_data = scrape_table_block(e_soup, "R-1B", E_PERIOD_MAP, current_year)
 
     # 2. SCRAPE WATER (2 blocks mapped to 5 periods)
-    w_soup = BeautifulSoup(requests.get(WATER_URL, headers=headers).text, 'html.parser')
+    w_resp = requests.get(WATER_URL, headers=headers, timeout=15)
+    w_soup = BeautifulSoup(w_resp.text, 'html.parser')
     W_SITE_MAP = {
         "January - June": "FIRST_HALF",
         "July - December": "SECOND_HALF"
     }
-    w_raw = scrape_table_block(w_soup, "Total Consumption Charge", W_SITE_MAP, current_year)
+    water_data = scrape_table_block(w_soup, "Total Consumption Charge", W_SITE_MAP, current_year)
+
+    total_items_found = len(r1a_data) + len(r1b_data) + len(water_data)
+
+    if total_items_found == 0:
+        print("SUBSTANTIAL FAILURE: Scraper found 0 rates in all 2026 tables.")
+        print("This likely means the website structure changed or the 2026 table was removed.")
+        sys.exit(1)
 
     updated = False
 
@@ -97,18 +108,18 @@ def main():
             updated = True
 
     # Apply Water (Broadcast logic)
-    if "FIRST_HALF" in w_raw:
-        r = w_raw["FIRST_HALF"]
-        w_obj = {"tier1": r[0], "tier2": r[1], "tier3": r[2], "tier4": r[3]}
-        for p in ["janMar", "aprMay", "june"]:
-            data["water"][p] = w_obj
+    if "FIRST_HALF" in water_data:
+        r = water_data["FIRST_HALF"]
+        if len(r) >= 4:
+            w_obj = {"tier1": r[0], "tier2": r[1], "tier3": r[2], "tier4": r[3]}
+            for p in ["janMar", "aprMay", "june"]: data["water"][p] = w_obj
             updated = True
             
-    if "SECOND_HALF" in w_raw:
-        r = w_raw["SECOND_HALF"]
-        w_obj = {"tier1": r[0], "tier2": r[1], "tier3": r[2], "tier4": r[3]}
-        for p in ["julSep", "octDec"]:
-            data["water"][p] = w_obj
+    if "SECOND_HALF" in water_data:
+        r = water_data["SECOND_HALF"]
+        if len(r) >= 4:
+            w_obj = {"tier1": r[0], "tier2": r[1], "tier3": r[2], "tier4": r[3]}
+            for p in ["julSep", "octDec"]: data["water"][p] = w_obj
             updated = True
 
     if updated:
@@ -116,9 +127,11 @@ def main():
         data["version"] = data.get("version", 1) + 1
         with open('ladwp_rates.json', 'w') as f:
             json.dump(data, f, indent=2)
-        print("Update Successful.")
+        print("Update Successful: New data found and applied.")
     else:
-        print("No new data found.")
+        print("Status: Table found, but no new data to apply to current JSON periods.")
+
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,24 @@
+name: Yearly SCE Rate Reminder
+on:
+  schedule:
+    # Runs at 09:00 on January 2nd every year
+    - cron: '0 9 2 1 *'
+  workflow_dispatch: # Allow testing the reminder manually
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Create Reminder Issue
+        uses: imjohnbo/issue-bot@v3
+        with:
+          title: "🗓️ Yearly Reminder: Update SCE Tariff Data"
+          body: |
+            SCE has likely published the new yearly Tariff Book.
+            1. Login to Edison SharePoint.
+            2. Download the Residential Schedule D and TOU-D PDFs.
+            3. Upload them to the 'sce_uploads' folder in this repo.
+            4. Run the 'Manual SCE Update' Action in Dry Run mode first.
+          token: ${{ secrets.GITHUB_TOKEN }}

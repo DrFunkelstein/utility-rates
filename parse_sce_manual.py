@@ -9,39 +9,30 @@ from datetime import datetime
 UPLOAD_FOLDER = "sce_uploads"
 JSON_FILE = "sce_rates.json"
 
-def extract_rates_from_pdf(pdf_path):
+def extract_from_text(text):
+    """
+    The core regex engine. Used for both PDF text and manual TXT uploads.
+    """
     found_data = {}
-    print(f"--- Parsing: {pdf_path} ---")
     
-    with pdfplumber.open(pdf_path) as pdf:
-        full_text = ""
-        for page in pdf.pages:
-            # Clean up text by removing extra spaces to make matching more reliable
-            text = page.extract_text()
-            if text:
-                full_text += text + "\n"
+    # We use very loose whitespace matching (\s+) because copy-pasting from 
+    # PDFs often introduces weird line breaks or extra spaces.
+    patterns = {
+        "TOU-D-4": r"Option\s+4-9\s+PM(?!-CPP).*?Summer.*?On-Peak.*?(\d+\.\d{5})",
+        "TOU-D-5": r"Option\s+5-8\s+PM(?!-CPP).*?Summer.*?On-Peak.*?(\d+\.\d{5})",
+        "PRIME": r"Option\s+PRIME(?!-CPP).*?Summer.*?On-Peak.*?(\d+\.\d{5})",
+        "Domestic": r"Schedule\s+D(?!-).*?Total\s+Rate.*?Baseline\s+Usage.*?(\d+\.\d{5})"
+    }
 
-        # 1. DEFINE PATTERNS BASED ON TARIFF LANGUAGE
-        # We look for the 'Option', skip any 'CPP' mentions, and find the 'Total Rate' row
-        patterns = {
-            "TOU-D-4": r"Option 4-9 PM(?!-CPP).*?Summer.*?On-Peak.*?(\d+\.\d{5})",
-            "TOU-D-5": r"Option 5-8 PM(?!-CPP).*?Summer.*?On-Peak.*?(\d+\.\d{5})",
-            "PRIME": r"Option PRIME(?!-CPP).*?Summer.*?On-Peak.*?(\d+\.\d{5})",
-            # Tightened Domestic to avoid the Baseline Credit ($0.10108)
-            "Domestic": r"Schedule D(?!-).*?Total Rate.*?Baseline Usage.*?(\d+\.\d{5})"
-        }
-
-        # 2. RUN EXTRACTION
-        for plan_id, regex in patterns.items():
-            # re.DOTALL allows the search to span multiple lines
-            # re.IGNORECASE handles variances in capitalization
-            match = re.search(regex, full_text, re.DOTALL | re.IGNORECASE)
-            if match:
-                found_data[plan_id] = float(match.group(1))
-                print(f"SUCCESS: {plan_id} -> ${found_data[plan_id]}")
-            else:
-                print(f"PENDING: Pattern for {plan_id} not found in this file.")
-
+    for plan_id, regex in patterns.items():
+        # re.S (DOTALL) allows .* to match newlines
+        match = re.search(regex, text, re.DOTALL | re.IGNORECASE)
+        if match:
+            found_data[plan_id] = float(match.group(1))
+            print(f"FOUND: {plan_id} -> ${found_data[plan_id]}")
+        else:
+            print(f"MISSING: {plan_id} pattern not matched.")
+            
     return found_data
 
 def main():
@@ -52,34 +43,50 @@ def main():
     if not os.path.exists(UPLOAD_FOLDER):
         os.makedirs(UPLOAD_FOLDER)
 
-    pdfs = [f for f in os.listdir(UPLOAD_FOLDER) if f.endswith(".pdf")]
-    if not pdfs:
-        print("Error: No PDF found. Please upload the SCE Tariff PDF to 'sce_uploads'.")
-        sys.exit(0)
-
-    # We iterate through ALL PDFs in the folder in case TOU and Domestic are in separate files
+    files = os.listdir(UPLOAD_FOLDER)
     all_extracted_rates = {}
-    for pdf_name in pdfs:
-        pdf_path = os.path.join(UPLOAD_FOLDER, pdf_name)
-        rates = extract_rates_from_pdf(pdf_path)
-        all_extracted_rates.update(rates)
+
+    for filename in files:
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+        
+        # --- CASE 1: PDF FILE ---
+        if filename.lower().endswith(".pdf"):
+            print(f"Attempting to read PDF: {filename}")
+            try:
+                with pdfplumber.open(file_path) as pdf:
+                    pdf_text = ""
+                    for page in pdf.pages:
+                        # 'layout=True' helps preserve table structures even 
+                        # in weirdly encoded SCE documents.
+                        pdf_text += page.extract_text(layout=True) + "\n"
+                    
+                    all_extracted_rates.update(extract_from_text(pdf_text))
+            except Exception as e:
+                print(f"Error reading PDF: {e}")
+
+        # --- CASE 2: TEXT FILE (Your manual copy-paste backup) ---
+        elif filename.lower().endswith(".txt"):
+            print(f"Reading manual text upload: {filename}")
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    all_extracted_rates.update(extract_from_text(f.read()))
+            except Exception as e:
+                print(f"Error reading text file: {e}")
 
     if not all_extracted_rates:
-        print("CRITICAL FAILURE: No rates could be identified in any uploaded PDFs.")
+        print("CRITICAL FAILURE: No rates found in any uploaded files.")
         sys.exit(1)
 
     if args.dry_run:
         print("\n--- DRY RUN RESULT ---")
-        print("Data found:", all_extracted_rates)
-        print("JSON file was NOT modified.")
+        print("Rates identified:", all_extracted_rates)
         sys.exit(0)
 
-    # 3. SAVE TO JSON
+    # --- SAVE TO JSON ---
     try:
         with open(JSON_FILE, 'r') as f:
             data = json.load(f)
         
-        # Update specific buckets (Summer On-Peak)
         if "TOU-D-4" in all_extracted_rates: 
             data["plans"]["TOU-D-4"]["summer"]["onPeak"] = all_extracted_rates["TOU-D-4"]
         if "TOU-D-5" in all_extracted_rates: 
@@ -94,10 +101,10 @@ def main():
         with open(JSON_FILE, 'w') as f:
             json.dump(data, f, indent=2)
             
-        print(f"\nSUCCESS: Updated {len(all_extracted_rates)} plans in {JSON_FILE}")
+        print(f"\nSUCCESS: {JSON_FILE} updated.")
         
     except Exception as e:
-        print(f"Error updating JSON: {e}")
+        print(f"JSON Save Error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

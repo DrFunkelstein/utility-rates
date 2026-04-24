@@ -1,0 +1,29 @@
+name: Manual SCE Update
+on:
+  push:
+    paths:
+      - 'sce_uploads/**.pdf'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Tools
+        run: pip install pdfplumber
+      - name: Run Parser
+        run: python parse_sce_manual.py
+      - name: Commit and Clean Up
+        run: |
+          git config --global user.name 'SCE-Manual-Bot'
+          git config --global user.email 'bot@utility.com'
+          git add sce_rates.json
+          git rm sce_uploads/*.pdf || echo "No files to remove"
+          git commit -m "Updated SCE rates from manual PDF upload" || exit 0
+          git push

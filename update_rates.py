@@ -7,7 +7,7 @@ from datetime import datetime
 ELECTRIC_URL = "https://www.ladwp.com/account/customer-service/electric-rates/residential-rates"
 WATER_URL = "https://www.ladwp.com/account/customer-service/water-rates/schedule-residential"
 
-PERIOD_MAP = {
+E_PERIOD_MAP = {
     "January - March": "janMar",
     "April - May": "aprMay",
     "June": "june",
@@ -15,19 +15,20 @@ PERIOD_MAP = {
     "October - December": "octDec"
 }
 
-def extract_numbers(cells):
-    """Extracts all decimals from a list of table cells."""
+def extract_rates_from_row(cells, expected_count):
+    """Extracts only decimal rates, ignoring integers like '2026' or tier numbers."""
     found = []
     for cell in cells:
         text = cell.get_text(strip=True).replace('$', '').replace(',', '')
+        # Regex looks for a decimal point. This ignores '2026' or '1'
         match = re.search(r"(\d+\.\d+)", text)
         if match:
-            found.append(float(match.group(1)))
-    return found
+            val = float(match.group(1))
+            if val < 500:
+                found.append(val)
+    return found[:expected_count]
 
-def scrape_table_block(soup, table_id_text, year_target="2026"):
-    """Finds a table by text, then finds the block of data for a specific year."""
-    # Find the table that contains our ID (R-1A, R-1B, etc)
+def scrape_table_block(soup, table_id_text, mapping, year_target="2026"):
     target_table = None
     for table in soup.find_all('table'):
         if table_id_text in table.get_text():
@@ -35,75 +36,78 @@ def scrape_table_block(soup, table_id_text, year_target="2026"):
             break
     
     if not target_table:
-        print(f"Could not find table: {table_id_text}")
         return {}
 
     results = {}
     in_year_block = False
     
     for row in target_table.find_all('tr'):
-        cells = row.find_all(['td', 'th'])
-        if not cells: continue
-        
         row_text = row.get_text(separator=' ', strip=True)
         
-        # Detect if we are entering the 2026 block or leaving it (entering 2025)
         if year_target in row_text:
             in_year_block = True
             continue
-        elif "2025" in row_text or "2024" in row_text:
+        elif "2025" in row_text:
             in_year_block = False
             
         if in_year_block:
-            # Check if this row is one of our periods
-            for site_label, json_key in PERIOD_MAP.items():
+            cells = row.find_all(['td', 'th'])
+            for site_label, json_key in mapping.items():
                 if site_label in row_text:
-                    nums = extract_numbers(cells)
+                    count = 4 if "Water" in table_id_text or "Consumption Charge" in table_id_text else 3
+                    nums = extract_rates_from_row(cells, count)
                     if nums:
                         results[json_key] = nums
-                        print(f"Found {table_id_text} {json_key}: {nums}")
+                        print(f"Match Found: {site_label} -> {json_key}: {nums}")
     return results
 
 def main():
-    headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}
-    
+    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         with open('ladwp_2026.json', 'r') as f:
             data = json.load(f)
     except Exception as e:
-        print(f"JSON Load Error: {e}")
+        print(f"File Error: {e}")
         return
 
-    # 1. Electric Scrape
-    e_resp = requests.get(ELECTRIC_URL, headers=headers, timeout=15)
-    e_soup = BeautifulSoup(e_resp.text, 'html.parser')
-    
-    r1a_data = scrape_table_block(e_soup, "R-1A")
-    r1b_data = scrape_table_block(e_soup, "R-1B")
+    # 1. SCRAPE ELECTRIC (5 periods)
+    e_soup = BeautifulSoup(requests.get(ELECTRIC_URL, headers=headers).text, 'html.parser')
+    r1a_data = scrape_table_block(e_soup, "R-1A", E_PERIOD_MAP)
+    r1b_data = scrape_table_block(e_soup, "R-1B", E_PERIOD_MAP)
 
-    # 2. Water Scrape
-    w_resp = requests.get(WATER_URL, headers=headers, timeout=15)
-    w_soup = BeautifulSoup(w_resp.text, 'html.parser')
-    water_data = scrape_table_block(w_soup, "Total Consumption Charge")
+    # 2. SCRAPE WATER (2 blocks mapped to 5 periods)
+    w_soup = BeautifulSoup(requests.get(WATER_URL, headers=headers).text, 'html.parser')
+    W_SITE_MAP = {
+        "January - June": "FIRST_HALF",
+        "July - December": "SECOND_HALF"
+    }
+    w_raw = scrape_table_block(w_soup, "Total Consumption Charge", W_SITE_MAP)
 
     updated = False
 
-    # Update R-1A (Standard)
-    for period, rates in r1a_data.items():
+    # Apply Electric
+    for p, rates in r1a_data.items():
         if len(rates) >= 3:
-            data["electric"]["standard"][period] = {"tier1": rates[0], "tier2": rates[1], "tier3": rates[2]}
+            data["electric"]["standard"][p] = {"tier1": rates[0], "tier2": rates[1], "tier3": rates[2]}
+            updated = True
+    for p, rates in r1b_data.items():
+        if len(rates) >= 3:
+            data["electric"]["tou"][p] = {"tier1": rates[0], "tier2": rates[1], "tier3": rates[2]}
             updated = True
 
-    # Update R-1B (TOU)
-    for period, rates in r1b_data.items():
-        if len(rates) >= 3:
-            data["electric"]["tou"][period] = {"tier1": rates[0], "tier2": rates[1], "tier3": rates[2]}
+    # Apply Water (Broadcast logic)
+    if "FIRST_HALF" in w_raw:
+        r = w_raw["FIRST_HALF"]
+        w_obj = {"tier1": r[0], "tier2": r[1], "tier3": r[2], "tier4": r[3]}
+        for p in ["janMar", "aprMay", "june"]:
+            data["water"][p] = w_obj
             updated = True
-
-    # Update Water
-    for period, rates in water_data.items():
-        if len(rates) >= 4:
-            data["water"][period] = {"tier1": rates[0], "tier2": rates[1], "tier3": rates[2], "tier4": rates[3]}
+            
+    if "SECOND_HALF" in w_raw:
+        r = w_raw["SECOND_HALF"]
+        w_obj = {"tier1": r[0], "tier2": r[1], "tier3": r[2], "tier4": r[3]}
+        for p in ["julSep", "octDec"]:
+            data["water"][p] = w_obj
             updated = True
 
     if updated:
@@ -111,9 +115,9 @@ def main():
         data["version"] = data.get("version", 1) + 1
         with open('ladwp_2026.json', 'w') as f:
             json.dump(data, f, indent=2)
-        print("SUCCESS: JSON updated with 2026 table data.")
+        print("Update Successful.")
     else:
-        print("FAILED: No 2026 data found in tables.")
+        print("No new data found.")
 
 if __name__ == "__main__":
     main()

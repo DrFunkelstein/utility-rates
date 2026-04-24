@@ -6,6 +6,7 @@ import sys
 import argparse
 from datetime import datetime
 
+# Set up global variables
 UPLOAD_FOLDER = "sce_uploads"
 JSON_FILE = "sce_rates.json"
 
@@ -30,7 +31,6 @@ VALID_BUCKETS = {
 }
 
 def normalize(text):
-    """Removes all whitespace and converts to uppercase for reliable matching."""
     return re.sub(r'\s+', '', text).upper()
 
 def extract_from_raw_text(text):
@@ -48,8 +48,10 @@ def extract_from_raw_text(text):
     locked_bins, locked_fixed = set(), set()
     
     plan_targets = {
-        "TOU-D-4": "OPTION4-9PM", "TOU-D-5": "OPTION5-8PM",
-        "PRIME": "OPTIONPRIME", "Domestic": "SCHEDULED"
+        "TOU-D-4": "OPTION4-9PM", 
+        "TOU-D-5": "OPTION5-8PM",
+        "PRIME": "OPTIONPRIME", 
+        "Domestic": "SCHEDULED"
     }
 
     bucket_order = [
@@ -59,11 +61,12 @@ def extract_from_raw_text(text):
         ("OFF-PEAK", "offPeak")
     ]
 
-    print(f"DEBUG: Analyzing {len(lines)} lines...")
+    print(f"DEBUG: Analyzing {len(lines)} lines of text...")
 
     for line in lines:
         clean_line = line.strip()
-        if not clean_line: continue
+        if not clean_line:
+            continue
         norm = normalize(clean_line)
 
         # 1. FIXED CHARGES
@@ -72,21 +75,42 @@ def extract_from_raw_text(text):
             if m: 
                 fixed_values["dailyCharge"] = float(m.group(1))
                 locked_fixed.add("DAILY")
+                print(f"   >> FOUND BSC: {fixed_values['dailyCharge']}")
+
         if "BASELINECREDIT" in norm and "CREDIT" not in locked_fixed:
             m = re.search(r"(\d+\.\d{5})", clean_line)
             if m: 
                 fixed_values["baselineCredit"] = float(m.group(1))
                 locked_fixed.add("CREDIT")
+                print(f"   >> FOUND Baseline Credit: {fixed_values['baselineCredit']}")
 
         # 2. PLAN DETECTION
         for plan_id, target in plan_targets.items():
             if target in norm and ("TOTAL1UG" in norm or "DELIVERYSERVICE" in norm or "DOMESTICSERVICE" in norm):
-                if plan_id == "Domestic" and "TOU" in norm: continue
+                if plan_id == "Domestic" and "TOU" in norm:
+                    continue
                 current_plan = plan_id
                 current_season = None 
                 domestic_tier_context = None
-                print(f"DEBUG: >>> Entering {current_plan} Table")
+                print(f"DEBUG: Entering {current_plan} Table...")
 
-        if not current_plan: continue
+        if not current_plan:
+            continue
 
         # 3. SEASON & TIER DETECTION
+        if "SUMMER" in norm:
+            current_season = "summer"
+        elif "WINTER" in norm:
+            current_season = "winter"
+
+        if current_plan == "Domestic":
+            if "BASELINESERVICE" in norm and "OVER" not in norm:
+                domestic_tier_context = "tier1"
+            elif "OVERBASELINESERVICE" in norm:
+                domestic_tier_context = "tier2"
+
+        # 4. RATE EXTRACTION
+        if current_plan == "Domestic" and domestic_tier_context and current_season:
+            bin_key = f"DOM_{current_season}_{domestic_tier_context}"
+            if bin_key not in locked_bins:
+                rates = re.findall(r"(\d+\.\d

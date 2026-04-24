@@ -20,7 +20,6 @@ def extract_rates_from_row(cells, expected_count):
     found = []
     for cell in cells:
         text = cell.get_text(strip=True).replace('$', '').replace(',', '')
-        # Regex looks for a decimal point. This ignores '2026' or '1'
         match = re.search(r"(\d+\.\d+)", text)
         if match:
             val = float(match.group(1))
@@ -64,16 +63,18 @@ def scrape_table_block(soup, table_id_text, mapping, year_target="2026"):
 def main():
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
-        with open('ladwp_2026.json', 'r') as f:
+        with open('ladwp_rates.json', 'r') as f:
             data = json.load(f)
     except Exception as e:
         print(f"File Error: {e}")
         return
 
+    current_year = str(datetime.now().year)
+
     # 1. SCRAPE ELECTRIC (5 periods)
     e_soup = BeautifulSoup(requests.get(ELECTRIC_URL, headers=headers).text, 'html.parser')
-    r1a_data = scrape_table_block(e_soup, "R-1A", E_PERIOD_MAP)
-    r1b_data = scrape_table_block(e_soup, "R-1B", E_PERIOD_MAP)
+    r1a_data = scrape_table_block(e_soup, "R-1A", E_PERIOD_MAP, current_year)
+    r1b_data = scrape_table_block(e_soup, "R-1B", E_PERIOD_MAP, current_year)
 
     # 2. SCRAPE WATER (2 blocks mapped to 5 periods)
     w_soup = BeautifulSoup(requests.get(WATER_URL, headers=headers).text, 'html.parser')
@@ -81,7 +82,7 @@ def main():
         "January - June": "FIRST_HALF",
         "July - December": "SECOND_HALF"
     }
-    w_raw = scrape_table_block(w_soup, "Total Consumption Charge", W_SITE_MAP)
+    w_raw = scrape_table_block(w_soup, "Total Consumption Charge", W_SITE_MAP, current_year)
 
     updated = False
 
@@ -113,7 +114,7 @@ def main():
     if updated:
         data["lastUpdated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
         data["version"] = data.get("version", 1) + 1
-        with open('ladwp_2026.json', 'w') as f:
+        with open('ladwp_rates.json', 'w') as f:
             json.dump(data, f, indent=2)
         print("Update Successful.")
     else:

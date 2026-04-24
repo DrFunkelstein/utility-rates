@@ -1,41 +1,38 @@
 {
   "version": 1,
   "utility": "LADWP",
-  "lastUpdated": "2026-03-21",
-
+  "lastUpdated": "2026-04-23",
   "periods": {
-    "jan_mar": [1, 2, 3],
-    "apr_may": [4, 5],
+    "janMar": [1, 2, 3],
+    "aprMay": [4, 5],
     "june": [6],
-    "jul_sep": [7, 8, 9],
-    "oct_dec": [10, 11, 12]
+    "julSep": [7, 8, 9],
+    "octDec": [10, 11, 12]
   },
-
   "electric": {
     "standard": {
-      "jan_mar": { "tier1": 0.24771, "tier2": 0.30630, "tier3": 0.30630 },
-      "apr_may": { "tier1": 0.24362, "tier2": 0.30221, "tier3": 0.30221 },
-      "june":    { "tier1": 0.24362, "tier2": 0.30221, "tier3": 0.38922 },
-      "jul_sep": { "tier1": 0.26011, "tier2": 0.32267, "tier3": 0.41557 },
-      "oct_dec": { "tier1": 0.26357, "tier2": 0.33597, "tier3": 0.42887 }
+      "janMar": { "tier1": 0.24771, "tier2": 0.30630, "tier3": 0.30630 },
+      "aprMay": { "tier1": 0.24362, "tier2": 0.30221, "tier3": 0.30221 },
+      "june":   { "tier1": 0.24362, "tier2": 0.30221, "tier3": 0.38922 },
+      "julSep": { "tier1": 0.26011, "tier2": 0.32267, "tier3": 0.41557 },
+      "octDec": { "tier1": 0.26357, "tier2": 0.33597, "tier3": 0.42887 }
     },
-
     "tou": {
-      "jan_mar": { "tier1": 0.27647, "tier2": 0.27647, "tier3": 0.25293 },
-      "apr_may": { "tier1": 0.27238, "tier2": 0.27238, "tier3": 0.24884 },
-      "june":    { "tier1": 0.33078, "tier2": 0.27238, "tier3": 0.24494 },
-      "jul_sep": { "tier1": 0.34699, "tier2": 0.28573, "tier3": 0.25694 },
-      "oct_dec": { "tier1": 0.28876, "tier2": 0.23778, "tier3": 0.21383 }
+      "janMar": { "tier1": 0.27647, "tier2": 0.27647, "tier3": 0.25293 },
+      "aprMay": { "tier1": 0.27238, "tier2": 0.27238, "tier3": 0.24884 },
+      "june":   { "tier1": 0.33078, "tier2": 0.27238, "tier3": 0.24494 },
+      "julSep": { "tier1": 0.34699, "tier2": 0.28573, "tier3": 0.25694 },
+      "octDec": { "tier1": 0.28876, "tier2": 0.23778, "tier3": 0.21383 }
     }
   },
-
   "water": {
-    "jan_mar": { "tier1": 12.495, "tier2": 14.681, "tier3": 15.427, "tier4": 17.522 },
-    "apr_may": { "tier1": 12.495, "tier2": 14.681, "tier3": 15.427, "tier4": 17.522 },
-    "june": { "tier1": 12.495, "tier2": 14.681, "tier3": 15.427, "tier4": 17.522 },
-    "jul_sep": { "tier1": 13.557, "tier2": 15.929, "tier3": 16.738, "tier4": 19.011 },
-    "oct_dec": { "tier1": 13.557, "tier2": 15.929, "tier3": 16.738, "tier4": 19.011 },
+    "janMar": { "tier1": 12.495, "tier2": 14.681, "tier3": 15.427, "tier4": 17.522 },
+    "aprMay": { "tier1": 12.495, "tier2": 14.681, "tier3": 15.427, "tier4": 17.522 },
+    "june":   { "tier1": 13.557, "tier2": 15.929, "tier3": 16.738, "tier4": 19.011 },
+    "julSep": { "tier1": 13.557, "tier2": 15.929, "tier3": 16.738, "tier4": 19.011 },
+    "octDec": { "tier1": 12.495, "tier2": 14.681, "tier3": 15.427, "tier4": 17.522 }
   },
-  
-  "trash": { "flatRate": 111.90 }
+  "trash": {
+    "flatRate": 111.90
+  }
 }

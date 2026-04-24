@@ -1,0 +1,44 @@
+name: SoCalGas Auto Update
+
+on:
+  schedule:
+    # Runs at 12:00 PM (Noon) UTC on the 1st, 2nd, and 3rd of every month
+    - cron: '0 12 1,2,3 * *'
+  workflow_dispatch: # Allows you to trigger it manually for testing
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Run Scraper
+        # This will turn RED and email you if it finds 0 rates (Structural Failure)
+        run: python update_gas.py
+
+      - name: Commit and Push Changes
+        run: |
+          git config --global user.name 'GasBot'
+          git config --global user.email 'bot@utilityestimator.com'
+          git add socalgas_rates.json
+          
+          # Only commit if the scraper actually found a new number
+          if git diff --staged --quiet; then
+            echo "No rate changes detected today."
+          else
+            git commit -m "Monthly Gas Rate update: $(date)"
+            git push
+          fi

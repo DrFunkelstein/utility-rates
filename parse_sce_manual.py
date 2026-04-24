@@ -17,9 +17,10 @@ def extract_from_raw_text(text):
     lines = text.split('\n')
     
     current_plan = None
-    saw_summer_context = False
+    saw_summer_header = False
     completed_plans = set()
     
+    # Precise Spaceless Targets
     plan_targets = {
         "TOU-D-4": "OPTION4-9PM",
         "TOU-D-5": "OPTION5-8PM",
@@ -27,44 +28,55 @@ def extract_from_raw_text(text):
         "Domestic": "SCHEDULED"
     }
 
-    print(f"DEBUG: Analyzing {len(lines)} lines...")
+    print(f"DEBUG: Processing {len(lines)} lines...")
 
     for line in lines:
         clean_line = line.strip()
         if not clean_line: continue
-        norm_line = normalize(clean_line)
+        norm = normalize(clean_line)
 
-        # 1. DETECT PLAN HEADERS
-        # We look for the "OPTION" header that appears above the tables
+        # 1. DETECT THE ACTUAL TABLE START
+        # We only set current_plan if we see the plan name AND it looks like a table header
+        # Table headers usually have 'TOTAL' or 'GENERATION' on the same or nearby lines
         for plan_id, target in plan_targets.items():
-            # Avoid the 'Applicability' sentences by checking for 'Option' string
-            if target in norm_line and "OPTION" in norm_line and "-CPP" not in norm_line:
-                if plan_id not in completed_plans:
-                    # Specific check to ensure Schedule D doesn't match TOU-D
-                    if plan_id == "Domestic" and "TOU" in norm_line:
-                        continue
-                    
-                    current_plan = plan_id
-                    saw_summer_context = False # Reset context for new plan
-                    print(f"DEBUG: >>> Entering Table Context: {current_plan}")
+            if target in norm and plan_id not in completed_plans:
+                # Filter out sentences: "Available as an option to...", "Eligibility for...", etc.
+                if any(x in norm for x in ["AVAILABLE", "ELIGIB", "PURSUANT", "CANCELLING", "REVISED"]):
+                    continue
+                
+                # Special check for Domestic vs TOU-D
+                if plan_id == "Domestic" and "TOU" in norm:
+                    continue
+
+                current_plan = plan_id
+                saw_summer_header = False
+                print(f"DEBUG: Entering Table Area for {current_plan}")
 
         if not current_plan:
             continue
 
-        # 2. DETECT SUMMER CONTEXT
-        # Some plans put 'Summer' on its own line, others put it on the rate line.
-        if "SUMMER" in norm_line:
-            saw_summer_context = True
+        # 2. TRACK SEASONAL CONTEXT
+        # If we see "Summer", we start looking for "On-Peak"
+        if "SUMMER" in norm:
+            saw_summer_header = True
+            print(f"   ...Found Summer header for {current_plan}")
+        
+        # If we see "Winter", we stop looking for Summer On-Peak for this plan
+        if "WINTER" in norm and saw_summer_header:
+            print(f"   ...Hit Winter, abandoning search for {current_plan}")
+            current_plan = None
+            saw_summer_header = False
+            continue
 
-        # 3. DETECT RATE ROW
+        # 3. MATCH THE RATE ROW
         is_rate_row = False
         if current_plan == "Domestic":
-            # For Tiered: look for 'Baseline Usage' row
-            if "BASELINE" in norm_line and "USAGE" in norm_line and "TOTAL" in norm_line:
+            # Schedule D matches 'Baseline Usage'
+            if "BASELINE" in norm and "USAGE" in norm:
                 is_rate_row = True
         else:
-            # For TOU: look for 'On-Peak' while in Summer context
-            if "ON-PEAK" in norm_line and saw_summer_context:
+            # TOU matches 'On-Peak' only if we've seen a Summer header recently
+            if "ON-PEAK" in norm and saw_summer_header:
                 is_rate_row = True
 
         if is_rate_row:
@@ -72,25 +84,25 @@ def extract_from_raw_text(text):
             rates = re.findall(r"(\d+\.\d{5})", clean_line)
             
             if len(rates) >= 2:
-                # SCE Logic: Total = Delivery (0) + Generation (1)
+                # Delivery (0) + Generation (1)
                 delivery = float(rates[0])
                 generation = float(rates[1])
                 total = round(delivery + generation, 5)
                 
                 found_data[current_plan] = total
-                print(f"DEBUG: SUCCESS matched {current_plan}: ${delivery} + ${generation} = ${total}")
+                print(f"   >> SUCCESS: {current_plan} = ${total} ({delivery} + {generation})")
                 
                 completed_plans.add(current_plan)
-                current_plan = None # Unlock
-                saw_summer_context = False
+                current_plan = None # Reset to look for next table
+                saw_summer_header = False
             elif current_plan == "Domestic" and len(rates) == 1:
-                # Backup for simple Schedule D rows
-                total = float(rates[0])
-                found_data[current_plan] = total
-                print(f"DEBUG: SUCCESS matched {current_plan}: ${total}")
+                # Backup for single-column Schedule D
+                val = float(rates[0])
+                found_data[current_plan] = val
+                print(f"   >> SUCCESS: {current_plan} = ${val}")
                 completed_plans.add(current_plan)
                 current_plan = None
-                saw_summer_context = False
+                saw_summer_header = False
 
     return found_data
 
@@ -100,15 +112,15 @@ def main():
     args = parser.parse_args()
 
     if not os.path.exists(UPLOAD_FOLDER): os.makedirs(UPLOAD_FOLDER)
-
     files = [f for f in os.listdir(UPLOAD_FOLDER) if f.endswith((".pdf", ".txt"))]
+    
     if not files:
-        print("No files found in sce_uploads.")
+        print("No files found. Upload to 'sce_uploads'.")
         sys.exit(0)
 
-    all_extracted = {}
+    all_results = {}
     for filename in files:
-        print(f"--- File: {filename} ---")
+        print(f"\n--- Checking File: {filename} ---")
         path = os.path.join(UPLOAD_FOLDER, filename)
         if filename.endswith(".pdf"):
             with pdfplumber.open(path) as pdf:
@@ -116,25 +128,26 @@ def main():
         else:
             with open(path, 'r', encoding='utf-8') as f: content = f.read()
         
-        all_extracted.update(extract_from_raw_text(content))
+        all_results.update(extract_from_raw_text(content))
 
-    if not all_extracted:
-        print("FAILURE: No rates matched.")
+    if not all_results:
+        print("\nFAILURE: No rates matched.")
         sys.exit(1)
 
     if args.dry_run:
-        print("\n--- DRY RUN COMPLETE ---")
-        print("Data found:", all_extracted)
+        print("\n--- DRY RUN RESULTS ---")
+        for k, v in all_results.items(): print(f"{k}: ${v}")
         sys.exit(0)
 
+    # Save to JSON
     try:
         with open(JSON_FILE, 'r') as f: data = json.load(f)
-        for pid, val in all_extracted.items():
+        for pid, val in all_results.items():
             if pid == "Domestic": data["plans"]["Domestic"]["summer"]["tier1"] = val
             else: data["plans"][pid]["summer"]["onPeak"] = val
         data["lastUpdated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
         with open(JSON_FILE, 'w') as f: json.dump(data, f, indent=2)
-        print(f"SUCCESS: {JSON_FILE} updated.")
+        print("\nSUCCESS: JSON updated.")
     except Exception as e:
         print(f"Error: {e}"); sys.exit(1)
 

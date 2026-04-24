@@ -9,6 +9,28 @@ from datetime import datetime
 UPLOAD_FOLDER = "sce_uploads"
 JSON_FILE = "sce_rates.json"
 
+# --- SCHEMA VALIDATOR ---
+# This defines exactly which buckets exist for each plan/season combo
+# to prevent 'ghost matches' from footnotes or other tables.
+VALID_BUCKETS = {
+    "TOU-D-4": {
+        "summer": ["onPeak", "midPeak", "offPeak"],
+        "winter": ["midPeak", "offPeak", "superOffPeak"]
+    },
+    "TOU-D-5": {
+        "summer": ["onPeak", "midPeak", "offPeak"],
+        "winter": ["midPeak", "offPeak", "superOffPeak"]
+    },
+    "PRIME": {
+        "summer": ["onPeak", "midPeak", "offPeak"],
+        "winter": ["midPeak", "offPeak", "superOffPeak"]
+    },
+    "Domestic": {
+        "summer": ["tier1"],
+        "winter": ["tier1"]
+    }
+}
+
 def normalize(text):
     return re.sub(r'\s+', '', text).upper()
 
@@ -22,20 +44,14 @@ def extract_from_raw_text(text):
     
     fixed_values = {}
     lines = text.split('\n')
-    
-    current_plan = None
-    current_season = None
-    locked_bins = set()
-    locked_fixed = set()
+    current_plan, current_season = None, None
+    locked_bins, locked_fixed = set(), set()
     
     plan_targets = {
-        "TOU-D-4": "OPTION4-9PM",
-        "TOU-D-5": "OPTION5-8PM",
-        "PRIME": "OPTIONPRIME",
-        "Domestic": "SCHEDULED"
+        "TOU-D-4": "OPTION4-9PM", "TOU-D-5": "OPTION5-8PM",
+        "PRIME": "OPTIONPRIME", "Domestic": "SCHEDULED"
     }
 
-    # IMPORTANT: We check SUPER-OFF-PEAK before OFF-PEAK to prevent overlap errors
     bucket_order = [
         ("SUPER-OFF-PEAK", "superOffPeak"),
         ("ON-PEAK", "onPeak"),
@@ -50,7 +66,7 @@ def extract_from_raw_text(text):
         if not clean_line: continue
         norm = normalize(clean_line)
 
-        # 1. GLOBAL FIXED CHARGES
+        # 1. FIXED CHARGES
         if "BASESERVICESCHARGE" in norm and "METER" in norm and "DAILY" not in locked_fixed:
             m = re.search(r"(\d+\.\d{3})", clean_line)
             if m: 
@@ -62,13 +78,11 @@ def extract_from_raw_text(text):
                 fixed_values["baselineCredit"] = float(m.group(1))
                 locked_fixed.add("CREDIT")
 
-        # 2. PLAN HEADER DETECTION
-        # Logic: We look for the Option name AND the string 'TOTAL1UG' which indicates a table header
+        # 2. PLAN DETECTION
         for plan_id, target in plan_targets.items():
             if target in norm and ("TOTAL1UG" in norm or "DELIVERYSERVICE" in norm):
                 current_plan = plan_id
                 current_season = None 
-                print(f"DEBUG: >>> Entering Table: {current_plan}")
 
         if not current_plan: continue
 
@@ -76,7 +90,7 @@ def extract_from_raw_text(text):
         if "SUMMER" in norm: current_season = "summer"
         elif "WINTER" in norm: current_season = "winter"
 
-        # 4. RATE EXTRACTION
+        # 4. RATE EXTRACTION WITH VALIDATION
         if current_plan == "Domestic":
             lock_key = "DOMESTIC_BASELINE"
             if "BASELINE" in norm and "USAGE" in norm and lock_key not in locked_bins:
@@ -88,16 +102,18 @@ def extract_from_raw_text(text):
         else:
             for label, json_key in bucket_order:
                 if label in norm and current_season:
+                    # VALIDATION CHECK: Is this bucket allowed for this plan/season?
+                    if json_key not in VALID_BUCKETS[current_plan][current_season]:
+                        continue
+
                     lock_key = f"{current_plan}_{current_season}_{json_key}"
                     if lock_key not in locked_bins:
                         rates = re.findall(r"(\d+\.\d{5})", clean_line)
                         if len(rates) >= 2:
-                            # Delivery + Generation = Total
                             total = round(float(rates[0]) + float(rates[1]), 5)
                             found_data[current_plan][current_season][json_key] = total
                             locked_bins.add(lock_key)
-                            print(f"   >> MATCH: {current_plan} {current_season} {json_key} -> ${total}")
-                            break # Move to next line once matched
+                            break 
 
     return found_data, fixed_values
 
@@ -110,10 +126,12 @@ def main():
     full_matrix, all_fixed = {}, {}
     for filename in files:
         path = os.path.join(UPLOAD_FOLDER, filename)
+        content = ""
         if filename.endswith(".pdf"):
             with pdfplumber.open(path) as pdf: content = "\n".join([p.extract_text() or "" for p in pdf.pages])
         else:
             with open(path, 'r', encoding='utf-8') as f: content = f.read()
+        
         rates, fixed = extract_from_raw_text(content)
         for plan, seasons in rates.items():
             if plan not in full_matrix: full_matrix[plan] = seasons
@@ -122,7 +140,7 @@ def main():
         all_fixed.update(fixed)
 
     if args.dry_run:
-        print("\n--- FINAL DRY RUN RESULTS (AUDITED) ---")
+        print("\n--- FINAL AUDITED DRY RUN RESULTS ---")
         print(json.dumps(full_matrix, indent=2)); print("Fixed Charges:", all_fixed); sys.exit(0)
 
     try:
@@ -133,7 +151,7 @@ def main():
             if seasons["summer"] or seasons["winter"]: data["plans"][pid] = seasons
         data["lastUpdated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
         with open(JSON_FILE, 'w') as f: json.dump(data, f, indent=2)
-        print(f"\nSUCCESS: Updated {JSON_FILE}")
+        print(f"\nSUCCESS: Updated {JSON_FILE} with Audited Bundled Rates.")
     except Exception as e: print(f"Error: {e}"); sys.exit(1)
 
 if __name__ == "__main__":

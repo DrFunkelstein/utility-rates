@@ -1,0 +1,32 @@
+name: Auto Update Rates
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # Runs every Monday at 9:00 AM
+  workflow_dispatch: # Allows you to trigger it manually for testing
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Tools
+        run: pip install requests beautifulsoup4
+
+      - name: Run Scraper
+        run: python update_rates.py
+
+      - name: Save Changes
+        run: |
+          git config --global user.name 'UtilityBot'
+          git config --global user.email 'bot@utilityapp.com'
+          git add ladwp_2026.json
+          git commit -m "Updated rates from LADWP website" || exit 0
+          git push

@@ -2,19 +2,21 @@ name: LADWP Auto Update
 on:
   schedule:
     - cron: '0 10 1 * *' # Runs at 10:00 AM on the 1st of every month
-  workflow_dispatch: # Allows you to run it manually with a button click
-
+  workflow_dispatch:
+  
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.11'
 
       - name: Install Dependencies
         run: pip install requests beautifulsoup4

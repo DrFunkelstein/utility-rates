@@ -49,7 +49,7 @@ def extract_from_raw_text(text):
     
     plan_targets = {
         "TOU-D-4": "OPTION4-9PM", "TOU-D-5": "OPTION5-8PM",
-        "PRIME": "OPTIONPRIME", "Domestic": "SCHEDULED"
+        "PRIME": "OPTIONPRIME", "Domestic": "DOMESTICSERVICE" # Switched anchor
     }
 
     bucket_order = [
@@ -58,8 +58,6 @@ def extract_from_raw_text(text):
         ("MID-PEAK", "midPeak"),
         ("OFF-PEAK", "offPeak")
     ]
-
-    print(f"DEBUG: Analyzing {len(lines)} lines...")
 
     for line in lines:
         clean_line = line.strip()
@@ -79,13 +77,16 @@ def extract_from_raw_text(text):
                 locked_fixed.add("CREDIT")
 
         # 2. PLAN DETECTION
+        # Logic: If we see a plan marker, lock in the context
         for plan_id, target in plan_targets.items():
-            if target in norm and ("TOTAL1UG" in norm or "DELIVERYSERVICE" in norm or "DOMESTICSERVICE" in norm):
-                if plan_id == "Domestic" and "TOU" in norm: continue
+            if target in norm:
+                # Filter out general sentences
+                if any(x in norm for x in ["AVAILABLE", "ELIGIB", "PURSUANT", "CANCELLING"]): continue
+                
                 current_plan = plan_id
                 current_season = None 
                 domestic_tier_context = None
-                print(f"DEBUG: >>> Entering {current_plan} Table")
+                print(f"DEBUG: >>> Entering {current_plan} Section")
 
         if not current_plan: continue
 
@@ -94,15 +95,20 @@ def extract_from_raw_text(text):
         elif "WINTER" in norm: current_season = "winter"
 
         if current_plan == "Domestic":
+            # In Schedule D, these are sub-headers for the next few lines
             if "BASELINESERVICE" in norm and "OVER" not in norm:
                 domestic_tier_context = "tier1"
+                print("   [Context] Found Tier 1 Header")
             elif "OVERBASELINESERVICE" in norm:
                 domestic_tier_context = "tier2"
+                print("   [Context] Found Tier 2 Header")
 
         # 4. RATE EXTRACTION
         if current_plan == "Domestic" and domestic_tier_context and current_season:
             bin_key = f"DOM_{current_season}_{domestic_tier_context}"
             if bin_key not in locked_bins:
+                # Look for rates on the line containing the season name
+                # Row looks like: 'Summer 0.18482 (R) 0.11761 (R) 0.00000'
                 rates = re.findall(r"(\d+\.\d{5})", clean_line)
                 if len(rates) >= 2:
                     total = round(float(rates[0]) + float(rates[1]), 5)

@@ -4,7 +4,8 @@
     "dailyCharge": 0.031,
     "minBill": 0.35,
     "nbcRate": 0.028,
-    "baselineCredit": 0.10108
+    "baselineCredit": 0.10108,
+    "climateCredit": 86.00
   },
   "plans": {
     "Domestic": {

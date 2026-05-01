@@ -3,6 +3,12 @@ on:
   schedule:
     - cron: '0 10 1 * *' 
   workflow_dispatch: 
+    inputs:
+      dry_run:
+        description: 'Dry Run (Check for changes but do not save)'
+        required: true
+        type: boolean
+        default: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -24,13 +30,17 @@ jobs:
         run: pip install requests beautifulsoup4
 
       - name: Run Scraper
-        run: python update_rates.py
+        # Passes --dry-run to the script if the checkbox is checked
+        run: |
+          python update_rates.py ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
 
       - name: Commit and Push Changes
-        # This only runs if the scraper was successful
+        # This step is skipped entirely if dry_run is true
+        if: github.event.inputs.dry_run != 'true'
         run: |
           git config --global user.name 'LADWP-Bot'
           git config --global user.email 'bot@utilityestimator.com'
           git add ladwp_rates.json
+          # Commit only if there are changes; '|| exit 0' prevents failure if no changes
           git commit -m "Automated rate update: $(date)" || exit 0
           git push

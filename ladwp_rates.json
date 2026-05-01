@@ -1,7 +1,7 @@
 {
   "version": 6,
   "utility": "LADWP",
-  "lastUpdated": "2026-05-01 15:01",
+  "lastUpdated": "2026-05-01 15:09",
   "periods": {
     "janMar": [
       1,
@@ -80,7 +80,10 @@
         "tier2": 0.23778,
         "tier3": 0.21383
       }
-    }
+    },
+    "pac": [
+      2.3
+    ]
   },
   "water": {
     "janMar": {

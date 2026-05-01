@@ -102,4 +102,27 @@ def main():
                 updated = True
 
     # 3. COMPARE WATER
-    for pattern, rates in
+    for pattern, rates in water_site_data.items():
+        json_keys = W_PERIOD_PATTERNS[pattern]
+        new_val = {"tier1": rates[0], "tier2": rates[1], "tier3": rates[2], "tier4": rates[3]}
+        for k in json_keys:
+            if data["water"].get(k) != new_val:
+                print(f"  [CHANGE] Water/{k}: {data['water'].get(k)} -> {new_val}")
+                data["water"][k] = new_val
+                updated = True
+
+    # 4. FINALIZATION
+    if updated:
+        if dry_run:
+            print("\n>>> FINISH: Changes were detected, but not saved due to Dry Run.")
+        else:
+            data["lastUpdated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            data["version"] = data.get("version", 1) + 1
+            with open('ladwp_rates.json', 'w') as f:
+                json.dump(data, f, indent=2)
+            print("\n>>> FINISH: Success! ladwp_rates.json has been updated.")
+    else:
+        print("\n>>> FINISH: No new data found. JSON is already up to date.")
+
+if __name__ == "__main__":
+    main()

@@ -114,3 +114,15 @@ def main():
         for k in json_keys:
             if data["water"].get(k) != new_val:
                 data["water"][k] = new_val
+                updated = True
+
+    if updated:
+        data["lastUpdated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        with open('ladwp_rates.json', 'w') as f:
+            json.dump(data, f, indent=2)
+        print(">>> SUCCESS: ladwp_rates.json updated with 2026 data.")
+    else:
+        print(">>> No new 2026 rates found beyond what is already in JSON.")
+
+if __name__ == "__main__":
+    main()

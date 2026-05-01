@@ -50,6 +50,7 @@ def scrape_table_block(soup, table_id_text, mapping, year_target="2026"):
     
     for row in target_table.find_all('tr'):
         row_text = row.get_text(separator=' ', strip=True)
+        print(f"DEBUG ROW: {row_text}")
         
         # Check for year boundaries in the table rows
         if year_target in row_text:

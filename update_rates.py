@@ -9,148 +9,174 @@ from datetime import datetime
 ELECTRIC_URL = "https://www.ladwp.com/account/customer-service/electric-rates/residential-rates"
 WATER_URL = "https://www.ladwp.com/account/customer-service/water-rates/schedule-residential"
 
-E_PERIOD_MAP = {
-    "January - March": "janMar",
-    "April - May": "aprMay",
-    "June": "june",
-    "July - September": "julSep",
-    "October - December": "octDec"
+# The site uses these two blocks for electric "Total Consumption" tables
+E_SITE_PERIODS = {
+    "January - June": "FIRST_HALF",
+    "July - December": "SECOND_HALF"
+}
+
+W_SITE_MAP = {
+    "January - June": "FIRST_HALF",
+    "July - December": "SECOND_HALF"
 }
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}
 
 # --- HELPERS ---
 
-def extract_rates_from_row(cells, expected_count):
-    """Extracts only decimal rates, ignoring integers like '2026' or tier numbers."""
+def extract_numbers(cells, expected_count):
+    """Extracts decimals from table cells, filtering out years or zip codes."""
     found = []
     for cell in cells:
         text = cell.get_text(strip=True).replace('$', '').replace(',', '')
+        # Pattern finds 0.12345 or 12.34
         match = re.search(r"(\d+\.\d+)", text)
         if match:
             val = float(match.group(1))
-            # Safety check: utility rates are small decimals, not large numbers like ZIPs or Years
-            if val < 500:
+            if val < 500: # Exclude years/zips
                 found.append(val)
     return found[:expected_count]
 
-def scrape_table_block(soup, table_id_text, mapping, year_target="2026"):
-    """Locates a specific table by text and extracts mapped rows for a target year."""
-    target_table = None
+def find_total_consumption_table(soup, occurrence=1):
+    """Finds the nth table labeled 'Total Consumption Charge'."""
+    count = 0
     for table in soup.find_all('table'):
-        if table_id_text in table.get_text():
-            target_table = table
-            break
-    
-    if not target_table:
-        return {}
+        if "Total Consumption Charge" in table.get_text():
+            count += 1
+            if count == occurrence:
+                return table
+    return None
 
+def scrape_consumption_rates(table, year_target="2026"):
+    """Parses a Consumption table for the specific year and splits into Half-Year blocks."""
     results = {}
-    in_year_block = False
-    
-    for row in target_table.find_all('tr'):
-        row_text = row.get_text(separator=' ', strip=True)
-        print(f"DEBUG ROW: {row_text}")
+    in_year = False
+    for row in table.find_all('tr'):
+        text = row.get_text(separator=' ', strip=True)
         
-        # Check for year boundaries in the table rows
-        if year_target in row_text:
-            in_year_block = True
+        # Identify the Year block
+        if year_target in text:
+            in_year = True
             continue
-        elif "2025" in row_text: # Stop when we hit the previous year
-            in_year_block = False
+        elif any(prev_year in text for prev_year in ["2025", "2024"]):
+            in_year = False
             
-        if in_year_block:
+        if in_year:
             cells = row.find_all(['td', 'th'])
-            for site_label, json_key in mapping.items():
-                if site_label in row_text:
-                    # Water tables usually have 4 tiers, Electric has 3
-                    count = 4 if "Water" in table_id_text or "Consumption Charge" in table_id_text else 3
-                    nums = extract_rates_from_row(cells, count)
+            for site_label, json_key in E_SITE_PERIODS.items():
+                if site_label in text:
+                    # Look for 3 rates (Tiers or Peaks)
+                    nums = extract_numbers(cells, 3)
                     if nums:
                         results[json_key] = nums
-                        print(f"Match Found: {site_label} -> {json_key}: {nums}")
     return results
 
-# --- MAIN EXECUTION ---
+def scrape_pac_table(soup):
+    """Scrapes the Power Access Charge table (Table 1) into a list of tiers."""
+    pac_table = None
+    for table in soup.find_all('table'):
+        if "Power Access Charge" in table.get_text():
+            pac_table = table
+            break
+    
+    if not pac_table: return None
+    
+    # We grab the charges (usually the second column)
+    charges = []
+    for row in pac_table.find_all('tr'):
+        nums = extract_numbers(row.find_all('td'), 1)
+        if nums:
+            charges.append(nums[0])
+    return charges
+
+# --- MAIN ---
 
 def main():
-    # 1. Load existing JSON
     try:
         with open('ladwp_rates.json', 'r') as f:
             data = json.load(f)
     except Exception as e:
-        print(f"Critical JSON Load Error: {e}")
+        print(f"JSON Load Error: {e}")
         sys.exit(1)
 
     current_year = str(datetime.now().year)
     print(f"Targeting Year: {current_year}")
 
-    # 2. Scrape Electric Rates (R-1A Standard and R-1B TOU)
-    try:
-        e_resp = requests.get(ELECTRIC_URL, headers=HEADERS, timeout=15)
-        e_soup = BeautifulSoup(e_resp.text, 'html.parser')
-        r1a_data = scrape_table_block(e_soup, "R-1A", E_PERIOD_MAP, current_year)
-        r1b_data = scrape_table_block(e_soup, "R-1B", E_PERIOD_MAP, current_year)
-    except Exception as e:
-        print(f"Electric Scrape Error: {e}")
-        r1a_data, r1b_data = {}, {}
+    # 1. SCRAPE ELECTRIC (R-1A and R-1B)
+    e_resp = requests.get(ELECTRIC_URL, headers=HEADERS, timeout=15)
+    e_soup = BeautifulSoup(e_resp.text, 'html.parser')
 
-    # 3. Scrape Water Rates (2 blocks mapped to 5 periods)
-    try:
-        w_resp = requests.get(WATER_URL, headers=HEADERS, timeout=15)
-        w_soup = BeautifulSoup(w_resp.text, 'html.parser')
-        W_SITE_MAP = {
-            "January - June": "FIRST_HALF",
-            "July - December": "SECOND_HALF"
-        }
-        water_data = scrape_table_block(w_soup, "Total Consumption Charge", W_SITE_MAP, current_year)
-    except Exception as e:
-        print(f"Water Scrape Error: {e}")
-        water_data = {}
+    # PAC (New!)
+    pac_rates = scrape_pac_table(e_soup)
+    if pac_rates:
+        data["electric"]["pac"] = pac_rates
+        print(f"PAC Rates Found: {pac_rates}")
 
-    # 4. Process and Apply Updates
+    # R-1A: Total Consumption is Table 3
+    r1a_table = find_total_consumption_table(e_soup, occurrence=1)
+    r1a_data = scrape_consumption_rates(r1a_table, current_year) if r1a_table else {}
+
+    # R-1B: Total Consumption is Table 6
+    r1b_table = find_total_consumption_table(e_soup, occurrence=2)
+    r1b_data = scrape_consumption_rates(r1b_table, current_year) if r1b_table else {}
+
+    # 2. SCRAPE WATER
+    w_resp = requests.get(WATER_URL, headers=HEADERS, timeout=15)
+    w_soup = BeautifulSoup(w_resp.text, 'html.parser')
+    # Water typically has only one Total Consumption table
+    w_table = find_total_consumption_table(w_soup, occurrence=1)
+    # We use consumption rates helper, but look for 4 numbers instead of 3
+    water_data = {}
+    if w_table:
+        in_year = False
+        for row in w_table.find_all('tr'):
+            text = row.get_text(strip=True)
+            if current_year in text: in_year = True
+            elif "2025" in text: in_year = False
+            if in_year:
+                cells = row.find_all(['td', 'th'])
+                for label, key in W_SITE_MAP.items():
+                    if label in text:
+                        nums = extract_numbers(cells, 4)
+                        if nums: water_data[key] = nums
+
+    # 3. BROADCAST TO JSON
     updated = False
 
-    # Apply Electric R-1A (Standard)
-    for p, rates in r1a_data.items():
-        if len(rates) >= 3:
-            data["electric"]["standard"][p] = {"tier1": rates[0], "tier2": rates[1], "tier3": rates[2]}
-            updated = True
+    def apply_elec(source_data, json_path):
+        nonlocal updated
+        if "FIRST_HALF" in source_data:
+            r = source_data["FIRST_HALF"]
+            for p in ["janMar", "aprMay", "june"]:
+                data["electric"][json_path][p] = {"tier1": r[0], "tier2": r[1], "tier3": r[2]}
+                updated = True
+        if "SECOND_HALF" in source_data:
+            r = source_data["SECOND_HALF"]
+            for p in ["julSep", "octDec"]:
+                data["electric"][json_path][p] = {"tier1": r[0], "tier2": r[1], "tier3": r[2]}
+                updated = True
 
-    # Apply Electric R-1B (TOU)
-    for p, rates in r1b_data.items():
-        if len(rates) >= 3:
-            data["electric"]["tou"][p] = {"tier1": rates[0], "tier2": rates[1], "tier3": rates[2]}
-            updated = True
+    apply_elec(r1a_data, "standard")
+    apply_elec(r1b_data, "tou")
 
-    # Apply Water (Broadcast 2 site rows across 5 app periods)
     if "FIRST_HALF" in water_data:
         r = water_data["FIRST_HALF"]
-        if len(r) >= 4:
-            w_obj = {"tier1": r[0], "tier2": r[1], "tier3": r[2], "tier4": r[3]}
-            for p in ["janMar", "aprMay", "june"]: 
-                data["water"][p] = w_obj
+        for p in ["janMar", "aprMay", "june"]:
+            data["water"][p] = {"tier1": r[0], "tier2": r[1], "tier3": r[2], "tier4": r[3]}
             updated = True
-            
     if "SECOND_HALF" in water_data:
         r = water_data["SECOND_HALF"]
-        if len(r) >= 4:
-            w_obj = {"tier1": r[0], "tier2": r[1], "tier3": r[2], "tier4": r[3]}
-            for p in ["julSep", "octDec"]: 
-                data["water"][p] = w_obj
+        for p in ["julSep", "octDec"]:
+            data["water"][p] = {"tier1": r[0], "tier2": r[1], "tier3": r[2], "tier4": r[3]}
             updated = True
 
-    # 5. Save results if changes were made
-    if updated:
+    if updated or pac_rates:
         data["lastUpdated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        data["version"] = data.get("version", 1) + 1
         with open('ladwp_rates.json', 'w') as f:
             json.dump(data, f, indent=2)
-        print("Update Successful: ladwp_rates.json updated.")
+        print("Update Successful.")
     else:
-        print("No new data found or rates already match existing JSON.")
-
-    sys.exit(0)
+        print("No changes applied.")
 
 if __name__ == "__main__":
     main()

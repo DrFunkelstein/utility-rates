@@ -1,0 +1,37 @@
+{
+  "lastUpdated": "2026-05-01 09:00:00",
+  "nbcRate": 0.0215,
+  "baselineCredit": 0.0932,
+  "sbpExportRate": 0.075,
+  "plans": {
+    "E-1 tiered": {
+      "summer": { "onPeak": 0.42, "offPeak": 0.52, "superOffPeak": 0.52 },
+      "winter": { "onPeak": 0.39, "offPeak": 0.49, "superOffPeak": 0.49 }
+    },
+    "E-TOU-C": {
+      "summer": { "onPeak": 0.55, "offPeak": 0.44, "superOffPeak": 0.44 },
+      "winter": { "onPeak": 0.45, "offPeak": 0.40, "superOffPeak": 0.40 }
+    },
+    "E-TOU-D": {
+      "summer": { "onPeak": 0.58, "offPeak": 0.42, "superOffPeak": 0.42 },
+      "winter": { "onPeak": 0.48, "offPeak": 0.39, "superOffPeak": 0.39 }
+    },
+    "E-ELEC": {
+      "summer": { "onPeak": 0.65, "offPeak": 0.44, "superOffPeak": 0.32 },
+      "winter": { "onPeak": 0.54, "offPeak": 0.41, "superOffPeak": 0.30 }
+    },
+    "EV2-A": {
+      "summer": { "onPeak": 0.62, "offPeak": 0.45, "superOffPeak": 0.28 },
+      "winter": { "onPeak": 0.52, "offPeak": 0.41, "superOffPeak": 0.25 }
+    },
+    "EV-B": {
+      "summer": { "onPeak": 0.64, "offPeak": 0.47, "superOffPeak": 0.29 },
+      "winter": { "onPeak": 0.54, "offPeak": 0.43, "superOffPeak": 0.26 }
+    }
+  },
+  "gas": {
+    "procurement": 0.48122,
+    "transportation": { "tier1": 1.15122, "tier2": 1.55122 },
+    "allowances": { "winter": 1.85, "summer": 0.48 }
+  }
+}

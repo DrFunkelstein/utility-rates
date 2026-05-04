@@ -1,1 +1,78 @@
-
+{
+  "lastUpdated": "2026-05-01 09:00:00",
+  "nbcRate": 0.0245,
+  "baselineCredit": 0.0872,
+  "minimumBillDaily": 0.384,
+  "sbpExportRate": 0.062,
+  "plans": {
+    "TOU-DR1": {
+      "hasBaseline": true,
+      "monthlySubscriptionFee": 0.0,
+      "dailyServiceCharge": 0.380,
+      "summer": { "onPeak": 0.67241, "offPeak": 0.44123, "superOffPeak": 0.34211 },
+      "winter": { "onPeak": 0.54122, "offPeak": 0.41098, "superOffPeak": 0.36125 }
+    },
+    "TOU-DR2": {
+      "hasBaseline": true,
+      "monthlySubscriptionFee": 0.0,
+      "dailyServiceCharge": 0.380,
+      "summer": { "onPeak": 0.58211, "offPeak": 0.38112, "superOffPeak": 0.28145 },
+      "winter": { "onPeak": 0.48123, "offPeak": 0.35122, "superOffPeak": 0.31145 }
+    },
+    "TOU-ELEC": {
+      "hasBaseline": false,
+      "monthlySubscriptionFee": 16.0,
+      "dailyServiceCharge": 0.310,
+      "summer": { "onPeak": 0.68122, "offPeak": 0.42145, "superOffPeak": 0.35122 },
+      "winter": { "onPeak": 0.52112, "offPeak": 0.39122, "superOffPeak": 0.31145 }
+    },
+    "DR-SES": {
+      "hasBaseline": false,
+      "monthlySubscriptionFee": 0.0,
+      "dailyServiceCharge": 0.430,
+      "summer": { "onPeak": 0.65122, "offPeak": 0.40122, "superOffPeak": 0.32112 },
+      "winter": { "onPeak": 0.50112, "offPeak": 0.38122, "superOffPeak": 0.30145 }
+    },
+    "EV-TOU-5": {
+      "hasBaseline": false,
+      "monthlySubscriptionFee": 16.0,
+      "dailyServiceCharge": 0.310,
+      "summer": { "onPeak": 0.72412, "offPeak": 0.45122, "superOffPeak": 0.15122 },
+      "winter": { "onPeak": 0.55122, "offPeak": 0.41122, "superOffPeak": 0.15122 }
+    },
+    "EV-TOU-5-P": {
+      "hasBaseline": false,
+      "monthlySubscriptionFee": 16.0,
+      "dailyServiceCharge": 0.310,
+      "summer": { "onPeak": 0.70122, "offPeak": 0.43122, "superOffPeak": 0.14852 },
+      "winter": { "onPeak": 0.53122, "offPeak": 0.39122, "superOffPeak": 0.14852 }
+    },
+    "TOU-DR-P": {
+      "hasBaseline": true,
+      "monthlySubscriptionFee": 0.0,
+      "dailyServiceCharge": 0.380,
+      "summer": { "onPeak": 0.62122, "offPeak": 0.41122, "superOffPeak": 0.32122 },
+      "winter": { "onPeak": 0.51122, "offPeak": 0.38122, "superOffPeak": 0.34122 }
+    },
+    "Standard DR": {
+      "hasBaseline": true,
+      "monthlySubscriptionFee": 0.0,
+      "dailyServiceCharge": 0.380,
+      "summer": { "onPeak": 0.44122, "offPeak": 0.55122, "superOffPeak": 0.55122 },
+      "winter": { "onPeak": 0.42122, "offPeak": 0.52122, "superOffPeak": 0.52122 }
+    },
+    "EV-TOU": {
+      "hasBaseline": false,
+      "monthlySubscriptionFee": 0.0,
+      "dailyServiceCharge": 0.380,
+      "summer": { "onPeak": 0.64122, "offPeak": 0.39122, "superOffPeak": 0.28122 },
+      "winter": { "onPeak": 0.52122, "offPeak": 0.37122, "superOffPeak": 0.26122 }
+    }
+  },
+  "gas": {
+    "procurement": 0.45621,
+    "transportation": { "tier1": 1.08231, "tier2": 1.42541 },
+    "fixed": { "customerCharge": 0.15123, "ppps": 0.18432, "regulatory": 0.00420 },
+    "allowances": { "winter": 1.644, "summer": 0.526 }
+  }
+}

@@ -20,6 +20,7 @@ def extract_decimal(text):
 def parse_sdge_pdf(pdf_path):
     print(f"\n[Analyzing PDF] {os.path.basename(pdf_path)}")
     
+    # Use None to distinguish between "value not found" and "zero price"
     results = {
         "plan_id": None,
         "is_tiered": False,
@@ -33,13 +34,16 @@ def parse_sdge_pdf(pdf_path):
         page = pdf.pages[0]
         text = page.extract_text()
         
+        # 1. Identify Plan ID
         plan_match = re.search(r"Schedule\s+([A-Z0-9-]+)", text)
         if plan_match:
             results["plan_id"] = plan_match.group(1)
+            # Schedule DR is the tiered plan
             if results["plan_id"] == "DR":
                 results["is_tiered"] = True
             print(f"  > Target Plan: {results['plan_id']} (Tiered: {results['is_tiered']})")
 
+        # 2. Extract Table Data
         table = page.extract_table()
         if table:
             current_season = None
@@ -47,6 +51,7 @@ def parse_sdge_pdf(pdf_path):
                 row = [str(cell) if cell else "" for cell in row]
                 row_str = " ".join(row)
 
+                # Track Season block
                 if "Summer" in row_str: current_season = "summer"
                 elif "Winter" in row_str: current_season = "winter"
 
@@ -55,24 +60,26 @@ def parse_sdge_pdf(pdf_path):
                     if total_rate == 0.0: continue
 
                     if results["is_tiered"]:
-                        # TIERED MAPPING
-                        # "Tier 1" maps to 'on' slot
+                        # MAPPING FOR SCHEDULE DR (TIERED)
+                        # Row containing "Tier 1" or "Up to 130%"
                         if "Tier 1" in row_str or "Up to 130%" in row_str:
                             results[current_season]["on"] = total_rate
-                        # "Tier 2" maps to 'mid' and 'off' slots
+                        # Row containing "Tier 2" or "Above 130%"
                         if "Tier 2" in row_str or "Above 130%" in row_str:
                             results[current_season]["mid"] = total_rate
                             results[current_season]["off"] = total_rate
                     else:
-                        # TOU MAPPING
+                        # MAPPING FOR TOU PLANS
                         if "On-Peak" in row_str: results[current_season]["on"] = total_rate
                         if "Off-Peak" in row_str: results[current_season]["mid"] = total_rate
                         if "Super Off-Peak" in row_str: results[current_season]["off"] = total_rate
 
+                # Global attribute: Baseline Credit
                 if "Baseline Adjustment Credit" in row_str:
                     credit = extract_decimal(row[-1])
                     if credit != 0: results["baseline_credit"] = abs(credit)
 
+                # Global attribute: Daily Service Charge
                 if "Base Services Charge ($/Day)" in row_str:
                     charge = extract_decimal(row[-1])
                     if charge != 0: results["service_charge"] = charge
@@ -107,12 +114,12 @@ def main():
             
         plan_key = "Standard DR" if raw_id == "DR" else raw_id
         if plan_key not in data["plans"]:
-            print(f"  [Skip] Plan {plan_key} not in app dictionary.")
+            print(f"  [Skip] Plan {plan_key} not in JSON dictionary.")
             continue
 
         p = data["plans"][plan_key]
         
-        # Helper for explicit logging and comparison
+        # Comparison and Logging helper
         def update_val(category, bin_name, current_val, new_val):
             nonlocal overall_updated
             if new_val is not None and new_val != 0.0 and new_val != current_val:
@@ -121,20 +128,14 @@ def main():
                 return new_val
             return current_val
 
-        # Update Service Charge
+        # Apply Updates
         p["dailyServiceCharge"] = update_val("Fixed", "Service Charge", p.get("dailyServiceCharge", 0), pdf_data["service_charge"])
 
-        # Update Summer Rates
-        p["summer"]["onPeak"] = update_val("Summer", "On-Peak", p["summer"].get("onPeak"), pdf_data["summer"]["on"])
-        p["summer"]["offPeak"] = update_val("Summer", "Off-Peak", p["summer"].get("offPeak"), pdf_data["summer"]["mid"])
-        p["summer"]["superOffPeak"] = update_val("Summer", "Super-Off", p["summer"].get("superOffPeak"), pdf_data["summer"]["off"])
+        for season in ["summer", "winter"]:
+            p[season]["onPeak"] = update_val(season.capitalize(), "On/Tier1", p[season].get("onPeak"), pdf_data[season]["on"])
+            p[season]["offPeak"] = update_val(season.capitalize(), "Off/Tier2", p[season].get("offPeak"), pdf_data[season]["mid"])
+            p[season]["superOffPeak"] = update_val(season.capitalize(), "SuperOff/Tier2", p[season].get("superOffPeak"), pdf_data[season]["off"])
 
-        # Update Winter Rates
-        p["winter"]["onPeak"] = update_val("Winter", "On-Peak", p["winter"].get("onPeak"), pdf_data["winter"]["on"])
-        p["winter"]["offPeak"] = update_val("Winter", "Off-Peak", p["winter"].get("offPeak"), pdf_data["winter"]["mid"])
-        p["winter"]["superOffPeak"] = update_val("Winter", "Super-Off", p["winter"].get("superOffPeak"), pdf_data["winter"]["off"])
-
-        # Global Baseline Credit
         if pdf_data["baseline_credit"]:
             data["baselineCredit"] = update_val("Global", "Baseline Credit", data.get("baselineCredit"), pdf_data["baseline_credit"])
 

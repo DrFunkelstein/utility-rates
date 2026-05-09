@@ -5,7 +5,7 @@ import pdfplumber
 from datetime import datetime
 
 # --- CONFIGURATION ---
-PDF_DIR = "pdfs/sdge"
+UPLOAD_DIR = "sdge_uploads"
 JSON_FILE = "sdge_rates.json"
 
 def extract_decimal(text):
@@ -14,58 +14,58 @@ def extract_decimal(text):
     clean = text.replace('$', '').replace(',', '').strip()
     if '(' in clean and ')' in clean:
         clean = "-" + clean.replace('(', '').replace(')', '')
+    # Match decimals like -0.10892 or 0.79343
     match = re.search(r"(-?\d+\.\d{3,6})", clean)
     return float(match.group(1)) if match else 0.0
 
-def parse_sdge_tariff(pdf_path):
-    print(f"--- Parsing SDG&E PDF: {os.path.basename(pdf_path)} ---")
+def parse_sdge_pdf(pdf_path):
+    print(f"Processing: {os.path.basename(pdf_path)}")
     
     results = {
         "plan_id": None,
-        "summer": {"on": 0, "mid": 0, "off": 0},
-        "winter": {"on": 0, "mid": 0, "off": 0},
-        "baseline_credit": 0.10892, # Fallback
-        "service_charge": 0.79343   # Fallback
+        "summer": {"on": 0.0, "mid": 0.0, "off": 0.0},
+        "winter": {"on": 0.0, "mid": 0.0, "off": 0.0},
+        "baseline_credit": 0.0,
+        "service_charge": 0.0
     }
 
     with pdfplumber.open(pdf_path) as pdf:
+        # SDG&E summaries are always on the first page
         page = pdf.pages[0]
         text = page.extract_text()
         
-        # 1. IDENTIFY PLAN ID (e.g. Schedule TOU-DR1)
+        # 1. Identify Plan ID (e.g. Schedule TOU-DR1 or Schedule DR)
         plan_match = re.search(r"Schedule\s+([A-Z0-9-]+)", text)
         if plan_match:
             results["plan_id"] = plan_match.group(1)
-            print(f"  Detected Plan: {results['plan_id']}")
 
-        # 2. EXTRACT RATES FROM THE TABLE
-        # We target the 'Total Electric Rate' column (usually the last one)
+        # 2. Extract Table Data
         table = page.extract_table()
         if table:
             current_season = None
             for row in table:
-                # Remove None types and clean strings
+                # Clean row and join to string for searching
                 row = [str(cell) if cell else "" for cell in row]
                 row_str = " ".join(row)
 
-                # Identify Season blocks
+                # Identify Season Section
                 if "Summer" in row_str: current_season = "summer"
                 if "Winter" in row_str: current_season = "winter"
 
-                # Extract Peak Values from the LAST column (Total Electric Rate)
+                # Map the 'Total Electric Rate' (Final Column) to our bins
                 if current_season:
-                    rate_val = extract_decimal(row[-1])
-                    if "On-Peak" in row_str: results[current_season]["on"] = rate_val
-                    if "Off-Peak" in row_str: results[current_season]["mid"] = rate_val
-                    if "Super Off-Peak" in row_str: results[current_season]["off"] = rate_val
+                    total_rate = extract_decimal(row[-1])
+                    if "On-Peak" in row_str: results[current_season]["on"] = total_rate
+                    if "Off-Peak" in row_str: results[current_season]["mid"] = total_rate
+                    if "Super Off-Peak" in row_str: results[current_season]["off"] = total_rate
 
-                # Extract Baseline Adjustment Credit
+                # Extract Baseline Credit (Found in the TRAC/UDC/Total columns)
                 if "Baseline Adjustment Credit" in row_str:
                     credit = extract_decimal(row[-1])
                     if credit != 0:
                         results["baseline_credit"] = abs(credit)
 
-                # Extract Base Services Charge
+                # Extract Service Charge
                 if "Base Services Charge ($/Day)" in row_str:
                     charge = extract_decimal(row[-1])
                     if charge != 0:
@@ -74,8 +74,8 @@ def parse_sdge_tariff(pdf_path):
     return results
 
 def main():
-    if not os.path.exists(PDF_DIR):
-        print(f"Directory {PDF_DIR} not found. Skipping.")
+    if not os.path.exists(UPLOAD_DIR):
+        print(f"Directory {UPLOAD_DIR} not found.")
         return
 
     # Load existing JSON
@@ -83,52 +83,45 @@ def main():
         with open(JSON_FILE, 'r') as f:
             data = json.load(f)
     except:
-        print("sdge_rates.json not found. Initializing.")
         data = {"lastUpdated": "", "plans": {}}
 
     updated = False
     
-    # Process every PDF in the directory
-    for filename in os.listdir(PDF_DIR):
+    for filename in os.listdir(UPLOAD_DIR):
         if filename.lower().endswith(".pdf"):
-            pdf_results = parse_sdge_tariff(os.path.join(PDF_DIR, filename))
+            pdf_data = parse_sdge_pdf(os.path.join(UPLOAD_DIR, filename))
             
-            plan_id = pdf_results["plan_id"]
-            if not plan_id: continue
+            # Map PDF name to JSON key
+            raw_id = pdf_data["plan_id"]
+            if not raw_id: continue
             
-            # Map PDF Schedule Name to App Plan ID
-            # (Matches 'Standard' for Schedule DR, etc)
-            app_id = plan_id
-            if plan_id == "DR": app_id = "Standard DR"
+            # Normalize IDs to match App logic
+            plan_key = raw_id
+            if raw_id == "DR": plan_key = "Standard DR"
 
-            # Update the JSON structure
-            if app_id not in data["plans"]:
-                data["plans"][app_id] = {"hasBaseline": True, "summer": {}, "winter": {}}
+            # Prepare JSON entry
+            if plan_key not in data["plans"]:
+                # Default metadata for new plans
+                data["plans"][plan_key] = {"hasBaseline": True, "monthlySubscriptionFee": 0.0}
 
-            # Update rates
-            data["plans"][app_id]["summer"] = {
-                "onPeak": pdf_results["summer"]["on"],
-                "offPeak": pdf_results["summer"]["mid"],
-                "superOffPeak": pdf_results["summer"]["off"]
-            }
-            data["plans"][app_id]["winter"] = {
-                "onPeak": pdf_results["winter"]["on"],
-                "offPeak": pdf_results["winter"]["mid"],
-                "superOffPeak": pdf_results["winter"]["off"]
-            }
+            # Inject parsed values
+            p = data["plans"][plan_key]
+            p["dailyServiceCharge"] = pdf_data["service_charge"]
+            p["summer"] = {"onPeak": pdf_data["summer"]["on"], "offPeak": pdf_data["summer"]["mid"], "superOffPeak": pdf_data["summer"]["off"]}
+            p["winter"] = {"onPeak": pdf_data["winter"]["on"], "offPeak": pdf_data["winter"]["mid"], "superOffPeak": pdf_data["winter"]["off"]}
             
-            # Update Global Constants
-            data["baselineCredit"] = pdf_results["baseline_credit"]
-            data["plans"][app_id]["dailyServiceCharge"] = pdf_results["service_charge"]
+            # Global Baseline Credit update (SDG&E usually standardizes this across residential)
+            if pdf_data["baseline_credit"] > 0:
+                data["baselineCredit"] = pdf_data["baseline_credit"]
             
+            print(f"  Updated {plan_key}")
             updated = True
-            print(f"  Successfully updated {app_id} in JSON.")
 
     if updated:
         data["lastUpdated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
         with open(JSON_FILE, 'w') as f:
             json.dump(data, f, indent=2)
-        print("\n>>> All SDG&E PDFs processed. JSON saved.")
+        print("\n>>> Success: sdge_rates.json updated via PDF.")
 
 if __name__ == "__main__":
     main()

@@ -35,7 +35,7 @@ jobs:
 
       - name: Run Manual PDF Parser
         # This overwrites web data with the high-precision PDF data
-        run: python parse_sdge_manual.py
+        run: python parse_sdge_manual.py ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
 
       - name: Commit and Push
         if: github.event.inputs.dry_run != 'true'

@@ -1,4 +1,4 @@
-name: SDG&E Rate Update
+name: SDGE Rate Update
 on:
   schedule:
     - cron: '0 12 1 * *' 
@@ -35,7 +35,7 @@ jobs:
 
       - name: Run Manual PDF Parser
         # This overwrites web data with the high-precision PDF data
-        run: python parse-sdge-manual.py
+        run: python parse_sdge_manual.py
 
       - name: Commit and Push
         if: github.event.inputs.dry_run != 'true'

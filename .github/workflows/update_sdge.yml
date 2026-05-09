@@ -16,21 +16,24 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4 
+
       - name: Setup Python
         uses: actions/setup-python@v5 
         with:
           python-version: '3.11'
+
       - name: Install Dependencies
-        run: |
-          pip install playwright
-          playwright install chromium
+        # We need these two libraries for the new static scraper
+        run: pip install requests beautifulsoup4
+
       - name: Run Scraper
         run: python update_sdge_rates.py ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
+
       - name: Commit and Push
         if: github.event.inputs.dry_run != 'true'
         run: |
           git config --global user.name 'SDGE-Bot'
           git config --global user.email 'bot@utilityestimator.com'
           git add sdge_rates.json
-          git commit -m "SDG&E auto-sync: $(date)" || exit 0
+          git commit -m "SDG&E rate update: $(date)" || exit 0
           git push

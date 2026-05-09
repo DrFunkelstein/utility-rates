@@ -20,7 +20,6 @@ def extract_decimal(text):
 def parse_sdge_pdf(pdf_path):
     print(f"\n[Analyzing PDF] {os.path.basename(pdf_path)}")
     
-    # Use None instead of 0.0 to detect "not found" vs "zero price"
     results = {
         "plan_id": None,
         "is_tiered": False,
@@ -34,7 +33,6 @@ def parse_sdge_pdf(pdf_path):
         page = pdf.pages[0]
         text = page.extract_text()
         
-        # 1. Identify Plan ID
         plan_match = re.search(r"Schedule\s+([A-Z0-9-]+)", text)
         if plan_match:
             results["plan_id"] = plan_match.group(1)
@@ -42,7 +40,6 @@ def parse_sdge_pdf(pdf_path):
                 results["is_tiered"] = True
             print(f"  > Target Plan: {results['plan_id']} (Tiered: {results['is_tiered']})")
 
-        # 2. Extract Table
         table = page.extract_table()
         if table:
             current_season = None
@@ -51,18 +48,23 @@ def parse_sdge_pdf(pdf_path):
                 row_str = " ".join(row)
 
                 if "Summer" in row_str: current_season = "summer"
-                if "Winter" in row_str: current_season = "winter"
+                elif "Winter" in row_str: current_season = "winter"
 
                 if current_season:
                     total_rate = extract_decimal(row[-1])
                     if total_rate == 0.0: continue
 
                     if results["is_tiered"]:
-                        if "Tier 1" in row_str: results[current_season]["on"] = total_rate
-                        if "Tier 2" in row_str: 
+                        # TIERED MAPPING
+                        # "Tier 1" maps to 'on' slot
+                        if "Tier 1" in row_str or "Up to 130%" in row_str:
+                            results[current_season]["on"] = total_rate
+                        # "Tier 2" maps to 'mid' and 'off' slots
+                        if "Tier 2" in row_str or "Above 130%" in row_str:
                             results[current_season]["mid"] = total_rate
                             results[current_season]["off"] = total_rate
                     else:
+                        # TOU MAPPING
                         if "On-Peak" in row_str: results[current_season]["on"] = total_rate
                         if "Off-Peak" in row_str: results[current_season]["mid"] = total_rate
                         if "Super Off-Peak" in row_str: results[current_season]["off"] = total_rate

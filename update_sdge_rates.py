@@ -85,6 +85,9 @@ def main():
         print(f"Scanning for {season.upper()} rates...")
         for app_id, marker in PLAN_MAP.items():
             if marker in soup_text:
+                # NEW: Confirm detection
+                print(f"  [Detected] Marker '{marker}' found.")
+                
                 start_idx = soup_text.find(marker)
                 relevant_text = soup_text[start_idx : start_idx + 3500]
                 
@@ -99,13 +102,16 @@ def main():
                     new_on = found_vals[0]
                     # Check for updates with a 0.5 cent rounding buffer
                     if abs(target["onPeak"] - new_on) > 0.005:
-                        print(f"  [UPDATE] {app_id}: {target['onPeak']} -> {new_on}")
+                        print(f"    [UPDATE] {app_id}: {target['onPeak']} -> {new_on}")
                         target["onPeak"] = new_on
                         target["offPeak"] = found_vals[1]
                         target["superOffPeak"] = found_vals[2] if len(found_vals) >= 3 else found_vals[1]
                         updated = True
                     else:
-                        print(f"  [OK] {app_id} matches current.")
+                        # NEW: Explicitly state that data matches
+                        print(f"    [MATCH] JSON value {target['onPeak']} aligns with site {new_on}")
+                else:
+                    print(f"    [WARN] Found marker for {app_id} but could not find rate values nearby.")
             else:
                 print(f"  [MISS] Marker '{marker}' not found on page.")
 

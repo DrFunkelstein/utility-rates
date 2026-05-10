@@ -11,19 +11,16 @@ JSON_FILE = "sdge_rates.json"
 
 def extract_decimal(text):
     if not text: return 0.0
-    # Clean up currency symbols and parentheses for negative numbers
     clean = text.replace('$', '').replace(',', '').strip()
     if '(' in clean and ')' in clean:
         clean = "-" + clean.replace('(', '').replace(')', '')
-    # Match decimals like -0.10892 or 0.79343
     match = re.search(r"(-?\d+\.\d{3,6})", clean)
     return float(match.group(1)) if match else 0.0
 
 def get_total_rate_from_row(row):
-    """Iterates backwards from the end of the row to find the first valid decimal rate."""
+    """Searches a row for a valid utility rate decimal (0.01 to 2.0)."""
     for cell in reversed(row):
         val = extract_decimal(str(cell))
-        # Rates are usually between 0.01 and 2.0 (but not 0.0)
         if 0.01 < val < 2.0:
             return val
     return 0.0
@@ -50,68 +47,63 @@ def parse_sdge_pdf(pdf_path):
             results["plan_id"] = plan_match.group(1)
             if results["plan_id"] == "DR":
                 results["is_tiered"] = True
-            print(f"  > Target Plan: {results['plan_id']} (Tiered: {results['is_tiered']})")
+            print(f"  > Detected Schedule: {results['plan_id']} (Tiered Plan: {results['is_tiered']})")
 
         # 2. Extract Table Data
         table = page.extract_table()
         if table:
             current_season = None
             for row in table:
-                # Clean row cells
+                # Clean row cells and create search string
                 row = [str(cell).strip() if cell else "" for cell in row]
                 row_str = " ".join(row)
 
-                # Track Season Block
-                if "Summer" in row_str: 
-                    current_season = "summer"
-                    continue
-                elif "Winter" in row_str: 
-                    current_season = "winter"
-                    continue
+                # Determine Season (Do not 'continue', as data may be in this same row)
+                if "Summer" in row_str: current_season = "summer"
+                elif "Winter" in row_str: current_season = "winter"
 
                 if current_season:
-                    # FIX: Search row for the rate decimal, ignoring trailing dashes
                     total_rate = get_total_rate_from_row(row)
                     
-                    if total_rate <= 0.01: continue 
+                    # Debug: Show rows containing tier info
+                    if "tier" in row_str.lower() or "130%" in row_str:
+                        print(f"    [Row Content]: {row_str[:60]}... -> Extracted Rate: {total_rate}")
 
-                    if results["is_tiered"]:
-                        # Tiered Logic: check for 'Tier 1' vs 'Tier 2'
-                        if "Tier 1" in row_str or "Up to" in row_str:
-                            print(f"    [Found] Tier 1 ({current_season}): {total_rate}")
-                            results[current_season]["on"] = total_rate
-                        elif "Tier 2" in row_str or "Above" in row_str:
-                            print(f"    [Found] Tier 2 ({current_season}): {total_rate}")
-                            results[current_season]["mid"] = total_rate
-                            results[current_season]["off"] = total_rate
-                    else:
-                        # TOU Logic
-                        if "On-Peak" in row_str: 
-                            results[current_season]["on"] = total_rate
-                        elif "Off-Peak" in row_str: 
-                            results[current_season]["mid"] = total_rate
-                        elif "Super Off-Peak" in row_str: 
-                            results[current_season]["off"] = total_rate
+                    if total_rate > 0.01:
+                        if results["is_tiered"]:
+                            # Logic for Schedule DR (Tiered)
+                            if any(x in row_str for x in ["Tier 1", "Up to"]):
+                                results[current_season]["on"] = total_rate
+                            elif any(x in row_str for x in ["Tier 2", "Above", "Greater"]):
+                                results[current_season]["mid"] = total_rate
+                                results[current_season]["off"] = total_rate
+                        else:
+                            # Logic for TOU Plans
+                            if "On-Peak" in row_str: results[current_season]["on"] = total_rate
+                            if "Off-Peak" in row_str: results[current_season]["mid"] = total_rate
+                            if "Super Off-Peak" in row_str: results[current_season]["off"] = total_rate
 
-                # Extract Global Attributes
+                # Global attribute: Baseline Credit (Check for parentheses or negative)
                 if "Baseline Adjustment Credit" in row_str:
-                    # Baseline credit can be negative, so we use the standard extractor
-                    credit = extract_decimal(row[-2] if len(row) > 1 else "") 
-                    if credit == 0: credit = extract_decimal(row[-1]) # Fallback
-                    if credit != 0: results["baseline_credit"] = abs(credit)
+                    credit = get_total_rate_from_row(row)
+                    if credit == 0: # Try second-to-last cell if last was a dash
+                        credit = extract_decimal(row[-2] if len(row) > 1 else "")
+                    if credit != 0: 
+                        results["baseline_credit"] = abs(credit)
 
+                # Global attribute: Base Services Charge
                 if "Base Services Charge ($/Day)" in row_str:
-                    charge = extract_decimal(row[-1])
+                    charge = get_total_rate_from_row(row)
                     if charge != 0: results["service_charge"] = charge
 
     return results
 
 def main():
     dry_run = "--dry-run" in sys.argv
-    if dry_run: print("!!! DRY RUN MODE: No changes will be saved to disk !!!")
+    if dry_run: print("!!! DRY RUN MODE ACTIVE !!!")
 
     if not os.path.exists(UPLOAD_DIR):
-        print(f"Directory {UPLOAD_DIR} not found.")
+        print(f"Error: {UPLOAD_DIR} directory not found.")
         return
 
     try:
@@ -127,12 +119,11 @@ def main():
         if not filename.lower().endswith(".pdf"): continue
         
         pdf_data = parse_sdge_pdf(os.path.join(UPLOAD_DIR, filename))
-        raw_id = pdf_data["plan_id"]
-        if not raw_id: continue
+        if not pdf_data["plan_id"]: continue
             
-        plan_key = "Standard DR" if raw_id == "DR" else raw_id
+        plan_key = "Standard DR" if pdf_data["plan_id"] == "DR" else pdf_data["plan_id"]
         if plan_key not in data["plans"]:
-            print(f"  [Skip] Plan {plan_key} not in JSON.")
+            print(f"  [Skip] {plan_key} not in app dictionary.")
             continue
 
         p = data["plans"][plan_key]
@@ -145,7 +136,7 @@ def main():
                 return new_val
             return current_val
 
-        # Update JSON
+        # Apply logic
         p["dailyServiceCharge"] = update_val("Fixed", "Service Charge", p.get("dailyServiceCharge", 0), pdf_data["service_charge"])
 
         for season in ["summer", "winter"]:
@@ -161,11 +152,11 @@ def main():
             data["lastUpdated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
             with open(JSON_FILE, 'w') as f:
                 json.dump(data, f, indent=2)
-            print("\n>>> Success: sdge_rates.json updated.")
+            print("\n>>> Success: JSON updated with PDF data.")
         else:
             print("\n>>> Dry Run Complete: Changes detected but not saved.")
     else:
-        print("\n>>> No changes detected (JSON matches PDF).")
+        print("\n>>> No changes detected between PDF and JSON.")
 
 if __name__ == "__main__":
     main()

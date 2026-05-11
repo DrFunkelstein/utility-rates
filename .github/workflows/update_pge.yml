@@ -1,74 +1,46 @@
-name: PG&E Auto/Manual Update
-
+name: PGE Auto/Manual Update
 on:
-  # 1. Scheduled: 1st of every month at 09:00 UTC
   schedule:
-    - cron: '0 9 1 * *'
-
-  # 2. File-Driven: Trigger when a PDF is uploaded to pge_uploads
-  push:
-    paths:
-      - 'pge_uploads/**.pdf'
-
-  # 3. Manual: The Testing Toggle
-  workflow_dispatch:
+    - cron: '0 12 1 * *' 
+  workflow_dispatch: 
     inputs:
       dry_run:
         description: 'Dry Run'
         required: true
         type: boolean
         default: false
-
-permissions:
-  contents: write
+  # Trigger when a PDF is committed to the uploads folder
+  push:
+    paths:
+      - 'pge_uploads/**.pdf'
 
 jobs:
-  pge-update:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4 
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5 
         with:
-          python-version: '3.10'
-          cache: 'pip'
+          python-version: '3.11'
 
       - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests pdfplumber
+        run: pip install requests beautifulsoup4 pdfplumber
 
-      - name: Run PG&E Scrapers
-        run: |
-          # Check if this was a manual run with Dry Run checked
-          # Or if we should default to false for schedule/push triggers
-          DRY_RUN_ARG=""
-          if [[ "${{ github.event.inputs.dry_run }}" == "true" ]]; then
-            DRY_RUN_ARG="--dry-run"
-            echo "--- DRY RUN MODE ENABLED ---"
-          fi
-          
-          # 1. Run the URL Scraper (update_pge_rates.py)
-          echo "Executing URL Scraper..."
-          python update_pge_rates.py $DRY_RUN_ARG
-          
-          # 2. Run the PDF Parser (parse_pge_manual.py)
-          echo "Executing PDF Tariff Parser..."
-          python parse_pge_manual.py $DRY_RUN_ARG
+      - name: Run Automated Scraper
+        run: python update_pge_rates.py ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
 
-      - name: Commit and Push Changes
+      - name: Run Manual PDF Parser
+        # This overwrites web data with the high-precision PDF data
+        run: python parse_pge_manual.py ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
+
+      - name: Commit and Push
         if: github.event.inputs.dry_run != 'true'
         run: |
-          git config --global user.name "MeterWise PGE Bot"
-          git config --global user.email "bot@meterwise.pro"
-          
+          git config --global user.name 'PGE-Bot'
+          git config --global user.email 'bot@meterwise.pro'
           git add pge_rates.json
-          
-          if git diff --staged --quiet; then
-            echo "No changes to pge_rates.json. Skipping commit."
-          else
-            git commit -m "Automated PG&E Rate Update: $(date +'%Y-%m-%d %H:%M')"
-            git push
-          fi
+          git commit -m "PG&E rate update: $(date)" || exit 0
+          git push

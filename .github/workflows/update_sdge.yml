@@ -1,4 +1,4 @@
-name: Manual SDGE Update
+name: SDGE Auto/Manual Update
 on:
   schedule:
     - cron: '0 12 1 * *' 

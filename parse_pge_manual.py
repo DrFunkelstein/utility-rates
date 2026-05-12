@@ -54,27 +54,35 @@ def extract_pge_tariff_data(pdf_path):
         for line in lines:
             line_clean = line.strip()
             
-            # The 'Total Usage' pattern (TOU-C, TOU-D, EV, ELEC)
-            if line_clean.startswith("Total Usage"):
+            # THE 'TOTAL USAGE' PATTERN (Used by TOU-C, TOU-D, and often E-1)
+            # This is the most reliable way to get the final "all-in" rate.
+            if line_clean.startswith("Total Usage") or "Total Bundled" in line_clean:
                 decimals = re.findall(r"(\d+\.\d{5})", line_clean)
                 if len(decimals) >= 2:
                     total_usage_count += 1
                     season = "summer" if total_usage_count == 1 else "winter"
                     results["rates"][f"{season}_on"] = float(decimals[0])
                     results["rates"][f"{season}_off"] = float(decimals[1])
-                    print(f"    [Captured] {season.upper()}: Peak=${decimals[0]}, Off-Peak=${decimals[1]}")
+                    print(f"    [Captured] {season.upper()}: Rate 1=${decimals[0]}, Rate 2=${decimals[1]}")
             
-            # The 'Tiered' pattern (E-1) - specifically avoiding 'Income Tier' labels
-            elif "Tier 1" in line_clean and "Income" not in line_clean:
+            # THE 'TIERED' PATTERN (Specifically for E-1 when Total Usage isn't matched)
+            # We use "Negative Lookahead" keywords to avoid sub-components and adjustments.
+            elif "Tier 1" in line_clean or "Tier 2" in line_clean:
+                # SKIP lines that are adjustments, credits, or income-based fees
+                if any(x in line_clean for x in ["Adjustment", "Income", "Credit", "Minimum"]):
+                    continue
+                
                 decimals = re.findall(r"(\d+\.\d{5})", line_clean)
-                if decimals: 
-                    results["rates"]["summer_off"] = float(decimals[-1])
-                    results["rates"]["winter_off"] = float(decimals[-1])
-            elif "Tier 2" in line_clean and "Income" not in line_clean:
-                decimals = re.findall(r"(\d+\.\d{5})", line_clean)
-                if decimals: 
-                    results["rates"]["summer_on"] = float(decimals[-1])
-                    results["rates"]["winter_on"] = float(decimals[-1])
+                if decimals:
+                    rate_val = float(decimals[-1]) # Total is always the last column
+                    if "Tier 1" in line_clean:
+                        results["rates"]["summer_off"] = rate_val
+                        results["rates"]["winter_off"] = rate_val
+                        print(f"    [Captured] E-1 TIER 1: {rate_val:.5f}")
+                    else:
+                        results["rates"]["summer_on"] = rate_val
+                        results["rates"]["winter_on"] = rate_val
+                        print(f"    [Captured] E-1 TIER 2: {rate_val:.5f}")
 
     return results
 
@@ -119,7 +127,6 @@ def main():
             for key, val in pdf_results["rates"].items():
                 season, bin_type = key.split('_')
                 
-                # App Mapping logic
                 json_bin = "onPeak" if bin_type == "on" else "offPeak"
                 if bin_type == "off" and any(x in target_id for x in ["EV", "ELEC"]):
                     json_bin = "superOffPeak"

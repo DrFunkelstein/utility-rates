@@ -130,6 +130,15 @@ def parse_pge_xlsx(file_path):
 
     return extracted_data, baseline_credit_found
 
+def cleanup_bins(data):
+    two_tier_plans = ["E-1 tiered", "E-TOU-C", "E-TOU-D"]
+    for plan_id in two_tier_plans:
+        if plan_id in data:
+            for season in ["summer", "winter"]:
+                if season in data[plan_id]:
+                    data[plan_id][season]["superOffPeak"] = 0.0
+    return data
+    
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
@@ -142,6 +151,7 @@ def main():
     
     try:
         new_data, b_credit = parse_pge_xlsx(tmp_xlsx)
+        new_data = cleanup_bins(new_data)
     except Exception as e:
         print(f"[Error] Parser Failure: {e}")
         if os.path.exists(tmp_xlsx): os.remove(tmp_xlsx)

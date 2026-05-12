@@ -1,37 +1,91 @@
 {
-  "lastUpdated": "2026-05-01 09:00:00",
-  "nbcRate": 0.0215,
-  "baselineCredit": 0.0932,
+  "lastUpdated": "2026-05-12 14:16",
+  "nbcRate": 0.01207,
+  "baselineCredit": 0.0814,
   "sbpExportRate": 0.075,
   "plans": {
     "E-1 tiered": {
-      "summer": { "onPeak": 0.42, "offPeak": 0.52, "superOffPeak": 0.52 },
-      "winter": { "onPeak": 0.39, "offPeak": 0.49, "superOffPeak": 0.49 }
+      "summer": {
+        "onPeak": 0.40702,
+        "offPeak": 0.32561,
+        "superOffPeak": 0.52
+      },
+      "winter": {
+        "onPeak": 0.40702,
+        "offPeak": 0.32561,
+        "superOffPeak": 0.49
+      }
     },
     "E-TOU-C": {
-      "summer": { "onPeak": 0.55, "offPeak": 0.44, "superOffPeak": 0.44 },
-      "winter": { "onPeak": 0.45, "offPeak": 0.40, "superOffPeak": 0.40 }
+      "summer": {
+        "onPeak": 0.5224,
+        "offPeak": 0.3994,
+        "superOffPeak": 0.44
+      },
+      "winter": {
+        "onPeak": 0.39757,
+        "offPeak": 0.36757,
+        "superOffPeak": 0.4
+      }
     },
     "E-TOU-D": {
-      "summer": { "onPeak": 0.58, "offPeak": 0.42, "superOffPeak": 0.42 },
-      "winter": { "onPeak": 0.48, "offPeak": 0.39, "superOffPeak": 0.39 }
+      "summer": {
+        "onPeak": 0.47708,
+        "offPeak": 0.34212,
+        "superOffPeak": 0.42
+      },
+      "winter": {
+        "onPeak": 0.38747,
+        "offPeak": 0.34886,
+        "superOffPeak": 0.39
+      }
     },
     "E-ELEC": {
-      "summer": { "onPeak": 0.65, "offPeak": 0.44, "superOffPeak": 0.32 },
-      "winter": { "onPeak": 0.54, "offPeak": 0.41, "superOffPeak": 0.30 }
+      "summer": {
+        "onPeak": 0.55214,
+        "offPeak": 0.39026,
+        "superOffPeak": 0.33358
+      },
+      "winter": {
+        "onPeak": 0.32063,
+        "offPeak": 0.29854,
+        "superOffPeak": 0.28468
+      }
     },
     "EV2-A": {
-      "summer": { "onPeak": 0.62, "offPeak": 0.45, "superOffPeak": 0.28 },
-      "winter": { "onPeak": 0.52, "offPeak": 0.41, "superOffPeak": 0.25 }
+      "summer": {
+        "onPeak": 0.53809,
+        "offPeak": 0.4276,
+        "superOffPeak": 0.22558
+      },
+      "winter": {
+        "onPeak": 0.41099,
+        "offPeak": 0.39428,
+        "superOffPeak": 0.22558
+      }
     },
     "EV-B": {
-      "summer": { "onPeak": 0.64, "offPeak": 0.47, "superOffPeak": 0.29 },
-      "winter": { "onPeak": 0.54, "offPeak": 0.43, "superOffPeak": 0.26 }
+      "summer": {
+        "onPeak": 0.62131,
+        "offPeak": 0.3772,
+        "superOffPeak": 0.26465
+      },
+      "winter": {
+        "onPeak": 0.43877999999999995,
+        "offPeak": 0.30677,
+        "superOffPeak": 0.23503999999999997
+      }
     }
   },
   "gas": {
     "procurement": 0.48122,
-    "transportation": { "tier1": 1.15122, "tier2": 1.55122 },
-    "allowances": { "winter": 1.85, "summer": 0.48 }
+    "transportation": {
+      "tier1": 1.15122,
+      "tier2": 1.55122
+    },
+    "allowances": {
+      "winter": 1.85,
+      "summer": 0.48
+    }
   }
 }

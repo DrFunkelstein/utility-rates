@@ -13,7 +13,7 @@ JSON_FILE = "pge_rates.json"
 def extract_pge_tariff_data(pdf_path):
     """
     Parses official PG&E Residential Tariff Sheets.
-    Verified to capture 'Total Usage' side-by-side rates and 5-part NBCs.
+    Targets 'Total Usage' side-by-side rates and 5-part NBCs.
     """
     results = {"plan_id": None, "rates": {}, "nbc_total": 0.0}
     
@@ -43,7 +43,7 @@ def extract_pge_tariff_data(pdf_path):
         for name, pattern in nbc_patterns.items():
             match = re.search(pattern, full_text, re.I)
             if match:
-                val = abs(float(match.group(1))) # Use absolute for NBC components
+                val = abs(float(match.group(1))) 
                 nbc_sum += val
         results["nbc_total"] = nbc_sum
 
@@ -51,29 +51,30 @@ def extract_pge_tariff_data(pdf_path):
         lines = full_text.split('\n')
         total_usage_count = 0
         
-        print("  > Extracting 'Total Usage' rates...")
         for line in lines:
             line_clean = line.strip()
             
+            # The 'Total Usage' pattern (TOU-C, TOU-D, EV, ELEC)
             if line_clean.startswith("Total Usage"):
                 decimals = re.findall(r"(\d+\.\d{5})", line_clean)
-                
                 if len(decimals) >= 2:
                     total_usage_count += 1
-                    # 1st line = Summer, 2nd line = Winter
                     season = "summer" if total_usage_count == 1 else "winter"
-                    
                     results["rates"][f"{season}_on"] = float(decimals[0])
                     results["rates"][f"{season}_off"] = float(decimals[1])
                     print(f"    [Captured] {season.upper()}: Peak=${decimals[0]}, Off-Peak=${decimals[1]}")
             
-            # Handle Tiered E-1 
-            elif "Tier 1" in line_clean and total_usage_count == 0:
+            # The 'Tiered' pattern (E-1) - specifically avoiding 'Income Tier' labels
+            elif "Tier 1" in line_clean and "Income" not in line_clean:
                 decimals = re.findall(r"(\d+\.\d{5})", line_clean)
-                if decimals: results["rates"]["summer_off"] = float(decimals[-1])
-            elif "Tier 2" in line_clean and total_usage_count == 0:
+                if decimals: 
+                    results["rates"]["summer_off"] = float(decimals[-1])
+                    results["rates"]["winter_off"] = float(decimals[-1])
+            elif "Tier 2" in line_clean and "Income" not in line_clean:
                 decimals = re.findall(r"(\d+\.\d{5})", line_clean)
-                if decimals: results["rates"]["summer_on"] = float(decimals[-1])
+                if decimals: 
+                    results["rates"]["summer_on"] = float(decimals[-1])
+                    results["rates"]["winter_on"] = float(decimals[-1])
 
     return results
 
@@ -106,35 +107,43 @@ def main():
             # 1. Update NBC
             if pdf_results["nbc_total"] > 0:
                 old_nbc = data.get("nbcRate", 0)
-                if abs(pdf_results["nbc_total"] - old_nbc) > 0.00001:
-                    print(f"  [CHANGE] Global NBC: JSON={old_nbc:.5f} | PDF={pdf_results['nbc_total']:.5f}")
-                    if not args.dry_run:
-                        data["nbcRate"] = pdf_results["nbc_total"]
-                        updated = True
+                diff_nbc = abs(pdf_results["nbc_total"] - old_nbc)
+                status = "[MATCH]" if diff_nbc < 0.00001 else "[CHANGE DETECTED]"
+                print(f"  {status} Global NBC: JSON={old_nbc:.5f} | PDF={pdf_results['nbc_total']:.5f}")
+                
+                if diff_nbc > 0.00001 and not args.dry_run:
+                    data["nbcRate"] = pdf_results["nbc_total"]
+                    updated = True
 
             # 2. Update Bin Rates
             for key, val in pdf_results["rates"].items():
                 season, bin_type = key.split('_')
-                json_bin = "onPeak" if bin_type == "on" else "offPeak"
                 
-                # EV/ELEC adjustment
+                # App Mapping logic
+                json_bin = "onPeak" if bin_type == "on" else "offPeak"
                 if bin_type == "off" and any(x in target_id for x in ["EV", "ELEC"]):
                     json_bin = "superOffPeak"
 
                 old_val = data["plans"][target_id][season].get(json_bin, 0)
-                if abs(val - old_val) > 0.00001:
-                    print(f"  [CHANGE DETECTED] {season} {json_bin}: JSON={old_val:.5f} | PDF={val:.5f}")
-                    if not args.dry_run:
-                        data["plans"][target_id][season][json_bin] = val
-                        updated = True
+                diff = abs(val - old_val)
+                status = "[MATCH]" if diff < 0.00001 else "[CHANGE DETECTED]"
+                
+                print(f"  {status} {season} {json_bin}: JSON={old_val:.5f} | PDF={val:.5f}")
+                
+                if diff > 0.00001 and not args.dry_run:
+                    data["plans"][target_id][season][json_bin] = val
+                    updated = True
 
-    if updated and not args.dry_run:
+    if updated:
         data["lastUpdated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        with open(JSON_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
-        print("\n>>> Success: JSON updated with precision data.")
+        if not args.dry_run:
+            with open(JSON_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
+            print("\n>>> Success: JSON updated with high-precision data.")
+        else:
+            print("\n>>> Dry Run Complete: Changes detected but not saved.")
     else:
-        print("\n>>> Result: No changes committed (or Dry Run).")
+        print("\n>>> Result: No significant changes detected in PDF folder.")
 
 if __name__ == "__main__":
     main()

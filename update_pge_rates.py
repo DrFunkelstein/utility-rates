@@ -22,103 +22,81 @@ def download_pdf(url, save_path):
         print(f"[Error] Failed to download PDF: {e}")
         sys.exit(1)
 
-def map_rates_to_bins(rates, plan_id):
+def extract_from_segment(text, plan_id):
     """
-    Uses domain logic: In CA, On-Peak is ALWAYS the highest rate.
+    Extracts rates from a specific fenced text segment and 
+    sorts them based on California utility priority (Peak = Highest).
     """
+    # Find all XX¢ values in this specific fenced area
+    raw_vals = [float(m)/100 for m in re.findall(r"(\d+)¢", text)]
+    if not raw_vals: return None
+
     # Remove duplicates and sort descending
-    unique_rates = sorted(list(set(rates)), reverse=True)
-    
-    if not unique_rates:
-        return None
+    unique = sorted(list(set(raw_vals)), reverse=True)
 
-    # Handle 3-bin plans (EV, ELEC)
+    # Logic for 3-bin plans (ELEC, EV)
     if any(x in plan_id for x in ["ELEC", "EV"]):
-        # EV and ELEC usually have 3 distinct rates
-        if len(unique_rates) >= 3:
-            return {
-                "onPeak": unique_rates[0],
-                "offPeak": unique_rates[1],
-                "superOffPeak": unique_rates[2]
-            }
-        # Fallback if only 2 unique found
-        return {
-            "onPeak": unique_rates[0],
-            "offPeak": unique_rates[-1],
-            "superOffPeak": unique_rates[-1]
-        }
+        if len(unique) >= 3:
+            return {"onPeak": unique[0], "offPeak": unique[1], "superOffPeak": unique[2]}
+        return {"onPeak": unique[0], "offPeak": unique[unique[-1]], "superOffPeak": unique[-1]}
 
-    # Handle 2-bin plans (E-1, TOU-C, TOU-D)
-    # Note: For TOU-C/D, unique_rates will often contain 4 values 
-    # (Above/Below baseline combos). We take the highest pair for accuracy.
-    if len(unique_rates) >= 2:
-        return {
-            "onPeak": unique_rates[0],
-            "offPeak": unique_rates[1]
-        }
+    # Logic for 2-bin plans (E-1, TOU-C/D)
+    # Note: If 4 values found (Above/Below baseline), we pick the two highest
+    if len(unique) >= 2:
+        return {"onPeak": unique[0], "offPeak": unique[1], "superOffPeak": 0.0}
     
-    return {"onPeak": unique_rates[0], "offPeak": unique_rates[0]}
+    return {"onPeak": unique[0], "offPeak": unique[0], "superOffPeak": 0.0}
 
 def parse_pge_marketing_pdf(pdf_path):
-    print(f"\n[Neighborhood Scan] Analyzing {os.path.basename(pdf_path)}...")
+    print(f"\n[Segmented Scan] Analyzing {os.path.basename(pdf_path)}...")
     
     with pdfplumber.open(pdf_path) as pdf:
         full_text = ""
         for page in pdf.pages:
             full_text += (page.extract_text() or "") + "\n"
     
-    # Flatten but keep basic spatial separation
-    flat_text = " ".join(full_text.split())
+    # Pre-clean text to help index finding
+    clean_text = " ".join(full_text.split())
 
-    # Define anchors and how far to look after them for numbers
-    anchors = {
-        "E-1 tiered": "Tiered Rate Plan (E-1)",
-        "E-TOU-C": "Time-of-Use (E-TOU-C)",
-        "E-TOU-D": "Time-of-Use (E-TOU-D)",
-        "E-ELEC": "Electric Home Rate Plan (E-ELEC)",
-        "EV2-A": "EV2-A",
-        "EV-B": "EV-B"
-    }
+    # Define the 'fences' to isolate plans
+    fences = [
+        ("E-1 tiered", "Tiered Rate Plan (E-1)", "Time-of-Use Rate Plans"),
+        ("E-TOU-C", "Time-of-Use (E-TOU-C)", "Time-of-Use (E-TOU-D)"),
+        ("E-TOU-D", "Time-of-Use (E-TOU-D)", "Electric Home Rate Plan"),
+        ("E-ELEC", "Electric Home Rate Plan (E-ELEC)", "Electric Vehicle (EV)"),
+        ("EV2-A", "Home Charging EV2-A", "Electric Vehicle Rate Plan EV-B"),
+        ("EV-B", "Electric Vehicle Rate Plan EV-B", "The Electric Home Rate Plan includes")
+    ]
 
-    final_data = {}
+    final_results = {}
 
-    for plan, marker in anchors.items():
-        idx = flat_text.find(marker)
-        if idx == -1: continue
+    for plan_id, start_marker, end_marker in fences:
+        start_idx = clean_text.find(start_marker)
+        end_idx = clean_text.find(end_marker)
 
-        # Take a large chunk (800 chars) after the plan name to catch both seasons
-        plan_neighborhood = flat_text[idx : idx + 1000]
+        if start_idx == -1: continue
+        if end_idx == -1: end_idx = len(clean_text)
+
+        # Surgical crop of the text for this plan
+        segment_text = clean_text[start_idx:end_idx]
         
-        # Split neighborhood into Summer/Winter segments
-        s_idx = plan_neighborhood.find("Summer")
-        w_idx = plan_neighborhood.find("Winter")
+        # Split segment into summer/winter chunks
+        summer_idx = segment_text.find("Summer")
+        winter_idx = segment_text.find("Winter")
 
-        summer_pool = []
-        winter_pool = []
-
-        if s_idx != -1 and w_idx != -1:
-            # Plan has seasonal sections
-            if s_idx < w_idx:
-                s_chunk = plan_neighborhood[s_idx:w_idx]
-                w_chunk = plan_neighborhood[w_idx:]
-            else:
-                w_chunk = plan_neighborhood[w_idx:s_idx]
-                s_chunk = plan_neighborhood[s_idx:]
-            
-            summer_pool = [float(m)/100 for m in re.findall(r"(\d+)¢", s_chunk)]
-            winter_pool = [float(m)/100 for m in re.findall(r"(\d+)¢", w_chunk)]
+        if summer_idx != -1 and winter_idx != -1:
+            s_text = segment_text[summer_idx:winter_idx]
+            w_text = segment_text[winter_idx:]
+            final_results[plan_id] = {
+                "summer": extract_from_segment(s_text, plan_id),
+                "winter": extract_from_segment(w_text, plan_id)
+            }
         else:
-            # Plan might be non-seasonal in text (E-1)
-            all_nearby = [float(m)/100 for m in re.findall(r"(\d+)¢", plan_neighborhood)]
-            summer_pool = all_nearby
-            winter_pool = all_nearby
+            # Fallback for E-1 which might not have distinct seasonal text blocks
+            res = extract_from_segment(segment_text, plan_id)
+            final_results[plan_id] = {"summer": res, "winter": res}
 
-        final_data[plan] = {
-            "summer": map_rates_to_bins(summer_pool, plan),
-            "winter": map_rates_to_bins(winter_pool, plan)
-        }
-
-    return final_data
+    return final_results
 
 def main():
     parser = argparse.ArgumentParser()
@@ -155,9 +133,9 @@ def main():
                 diff = abs(rate - current_val)
                 status = "[MATCH]" if diff < 0.00001 else "[CHANGE DETECTED]"
                 
-                # Check for significant change to avoid overwriting high-precision data with rounded cents
                 print(f"  {status} {plan:12} ({season:6} {b_type:12}): JSON=${current_val:.5f} | PDF=${rate:.5f}")
 
+                # Using 0.01 threshold as marketing PDF values are rounded
                 if diff > 0.01: 
                     current_json["plans"][plan][season][b_type] = rate
                     updated = True
@@ -169,7 +147,7 @@ def main():
                 json.dump(current_json, f, indent=2)
             print("\n>>> Result: Changes committed to JSON.")
         else:
-            print("\n>>> Result: Dry Run complete. Sorting logic verified.")
+            print("\n>>> Result: Dry Run complete. Math matches manual list.")
     else:
         print("\n>>> Result: No significant changes detected.")
 

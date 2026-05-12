@@ -24,7 +24,6 @@ def download_xlsx(url, save_path):
         sys.exit(1)
 
 def clean_val(val):
-    """Safely converts Excel cell values to float, handling currency and negatives."""
     if pd.isna(val) or str(val).strip() in ["", "-", "None"]: return 0.0
     s = str(val).replace('$', '').replace(',', '').strip()
     if '(' in s and ')' in s:
@@ -40,7 +39,7 @@ def parse_pge_xlsx(file_path):
     extracted_data = {}
     baseline_credit_found = None
 
-    # Markers based exactly on your CSV dump
+    # Refined markers: We look for the specific headers to avoid EM/Master-metered bleed
     plan_markers = {
         "E-1 tiered": ["E1, ESR", "Tiered Energy Charges"],
         "E-TOU-C": ["Rate Schedule E-TOU-C"],
@@ -49,6 +48,9 @@ def parse_pge_xlsx(file_path):
         "EV2-A": ["Rate Schedule EV2"],
         "EV-B": ["EV, Rate B"]
     }
+    
+    # Plans we specifically want to IGNORE to prevent overwriting residential data
+    ignore_list = ["EM", "EM-TOU", "ES,", "ET,"]
 
     for sheet_name in xlsx.sheet_names:
         print(f"  > Scanning Sheet: {sheet_name}")
@@ -58,60 +60,69 @@ def parse_pge_xlsx(file_path):
         current_season = "summer"
 
         for idx, row in df.iterrows():
-            # FIX: Explicit list comprehension to force strings and handle the TypeError
             row_vals = [str(item) for item in row.tolist()]
-            row_str = " ".join(row_vals).lower()
+            row_str = " ".join(row_vals)
             
-            # 1. Identify Plan Start
+            # 1. Identify Plan Start & Handle Exclusions
+            found_new_anchor = False
             for json_id, markers in plan_markers.items():
-                if any(m.lower() in row_str for m in markers):
+                if any(m in row_str for m in markers):
+                    # Check if this is an "EM" or Master Metered row we should skip
+                    first_cell = str(row.iloc[0]).strip()
+                    if any(bad in first_cell for bad in ignore_list) and "E1" not in first_cell:
+                        # Reset if we hit an EM section so it doesn't attribute rows to the previous plan
+                        current_plan_id = None 
+                        continue
+                    
                     current_plan_id = json_id
+                    found_new_anchor = True
                     if current_plan_id not in extracted_data:
                         extracted_data[current_plan_id] = {"summer": {}, "winter": {}}
                     print(f"    [Found] {json_id} block start (Row {idx})")
+                    break # Stop looking for markers once found
 
             if not current_plan_id: continue
 
             # 2. Update Season Context
-            if "summer" in row_str: current_season = "summer"
-            elif "winter" in row_str: current_season = "winter"
+            if "Summer" in row_str: current_season = "summer"
+            elif "Winter" in row_str: current_season = "winter"
 
-            # 3. Handle E-1 Tiered (Table 1: Col 8 and 9)
+            # 3. Handle E-1 Tiered (Standard Table 1: Col 8 and 9)
             if current_plan_id == "E-1 tiered":
-                if "tiered energy charges" in row_str:
+                if "Tiered Energy Charges" in row_str:
                     t1 = clean_val(row.iloc[8])
                     t2 = clean_val(row.iloc[9])
                     if t1 > 0:
                         extracted_data["E-1 tiered"]["summer"] = {"onPeak": t2, "offPeak": t1}
                         extracted_data["E-1 tiered"]["winter"] = {"onPeak": t2, "offPeak": t1}
-                        print(f"      -> E-1 Captured: T1={t1}, T2={t2}")
+                        print(f"      -> Captured Residential E-1: T1={t1}, T2={t2}")
                 continue
 
-            # 4. Determine Column Mapping based on CSV structure
-            # Standard (E-TOU-C/D) use Col 8/9 | EV/Tech use Col 7/8
+            # 4. Handle TOU Rows (C, D, EV, ELEC)
             is_ev_tech = any(x in current_plan_id for x in ["EV", "ELEC"])
             period_col = 7 if is_ev_tech else 8
             rate_col = 8 if is_ev_tech else 9
             
             if len(row) <= max(period_col, rate_col): continue
             
-            period_cell = str(row.iloc[period_col]).lower()
+            period_cell = str(row.iloc[period_col]).strip()
             
-            if "peak" in period_cell:
+            if "Peak" in period_cell:
                 rate = clean_val(row.iloc[rate_col])
                 if rate > 0:
-                    if "peak" in period_cell and "off" not in period_cell and "part" not in period_cell:
+                    if period_cell == "Peak":
                         extracted_data[current_plan_id][current_season]["onPeak"] = rate
-                    elif "off-peak" in period_cell:
+                    elif period_cell == "Off-Peak":
                         key = "superOffPeak" if is_ev_tech else "offPeak"
                         extracted_data[current_plan_id][current_season][key] = rate
-                    elif "part" in period_cell:
+                    elif period_cell == "Partial-Peak" or period_cell == "Part-Peak":
                         extracted_data[current_plan_id][current_season]["offPeak"] = rate
                     
                     print(f"      -> {current_plan_id} {current_season} {period_cell}: {rate}")
 
-                # 5. Baseline Credit (Standard Table: Col 10)
-                if not is_ev_tech and len(row) > 10:
+                # 5. Capture Baseline Credit (Standard Table: Col 10)
+                # We specifically look for the one in the E-TOU-C block
+                if current_plan_id == "E-TOU-C" and len(row) > 10:
                     b_val = clean_val(row.iloc[10])
                     if b_val < 0: 
                         baseline_credit_found = abs(b_val)

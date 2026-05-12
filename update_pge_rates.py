@@ -30,10 +30,10 @@ def parse_pge_marketing_pdf(pdf_path):
         for page in pdf.pages:
             full_text += (page.extract_text() or "") + "\n"
     
-    # Flatten whitespace to make regex easier across line breaks
+    # Flatten whitespace to simplify regex across column wraps
     text = " ".join(full_text.split())
 
-    extracted = {
+    data = {
         "E-1 tiered": {"summer": {}, "winter": {}},
         "E-TOU-C": {"summer": {}, "winter": {}},
         "E-TOU-D": {"summer": {}, "winter": {}},
@@ -42,65 +42,52 @@ def parse_pge_marketing_pdf(pdf_path):
         "EV-B": {"summer": {}, "winter": {}}
     }
 
-    # 1. E-1 Tiered Logic (Direct search)
-    e1_match = re.search(r"Tier 1.*?(\d+)¢.*?Tier 2.*?(\d+)¢", text)
-    if e1_match:
-        extracted["E-1 tiered"]["summer"]["onPeak"] = float(e1_match.group(2)) / 100
-        extracted["E-1 tiered"]["summer"]["offPeak"] = float(e1_match.group(1)) / 100
-        extracted["E-1 tiered"]["winter"] = extracted["E-1 tiered"]["summer"]
+    # 1. E-1 TIERED
+    e1 = re.search(r"Tier 1.*?(\d+)¢.*?Tier 2.*?(\d+)¢", text)
+    if e1:
+        rate_t1, rate_t2 = float(e1.group(1))/100, float(e1.group(2))/100
+        data["E-1 tiered"]["summer"] = {"onPeak": rate_t2, "offPeak": rate_t1}
+        data["E-1 tiered"]["winter"] = {"onPeak": rate_t2, "offPeak": rate_t1}
 
-    # 2. E-TOU-C Logic (Peak 4-9)
-    # Sequence in text: 40¢ ... 32¢ 44¢ 32¢ (Summer) / 37¢ ... 29¢ 32¢ 29¢ (Winter)
-    # We take the "Above Baseline" rates (44/32 and 32/29)
-    etc_s = re.search(r"E-TOU-C.*?Summer Season.*?(\d+)¢.*?(\d+)¢ (\d+)¢ (\d+)¢", text)
+    # 2. E-TOU-C (Capture the 'Above Baseline' sequence: 40 52 40)
+    etc_s = re.search(r"E-TOU-C.*?Summer Season.*?(\d+)¢ (\d+)¢ (\d+)¢", text)
     if etc_s:
-        extracted["E-TOU-C"]["summer"]["onPeak"] = float(etc_s.group(3)) / 100 # 44
-        extracted["E-TOU-C"]["summer"]["offPeak"] = float(etc_s.group(4)) / 100 # 32
+        data["E-TOU-C"]["summer"] = {"onPeak": float(etc_s.group(2))/100, "offPeak": float(etc_s.group(1))/100}
     
-    etc_w = re.search(r"Winter Season Oct 1–May 31 (\d+)¢.*?(\d+)¢ (\d+)¢ (\d+)¢", text)
+    etc_w = re.search(r"Winter Season Oct 1–May 31 (\d+)¢ (\d+)¢ (\d+)¢", text)
     if etc_w:
-        extracted["E-TOU-C"]["winter"]["onPeak"] = float(etc_w.group(3)) / 100 # 32
-        extracted["E-TOU-C"]["winter"]["offPeak"] = float(etc_w.group(4)) / 100 # 29
+        data["E-TOU-C"]["winter"] = {"onPeak": float(etc_w.group(2))/100, "offPeak": float(etc_w.group(1))/100}
 
-    # 3. E-TOU-D Logic (Peak 5-8)
-    # Sequence: 52¢ 40¢ 34¢ 48¢ 34¢ (Summer) -> [Peak Above, Peak Below, Off]
+    # 3. E-TOU-D (Sequence: 34 48 34 for Summer)
     etd_s = re.search(r"E-TOU-D.*?Summer Season.*?(\d+)¢ (\d+)¢ (\d+)¢", text)
     if etd_s:
-        extracted["E-TOU-D"]["summer"]["onPeak"] = float(etd_s.group(1)) / 100 # 52
-        extracted["E-TOU-D"]["summer"]["offPeak"] = float(etd_s.group(3)) / 100 # 34
+        data["E-TOU-D"]["summer"] = {"onPeak": float(etd_s.group(2))/100, "offPeak": float(etd_s.group(1))/100}
     
     etd_w = re.search(r"E-TOU-D.*?Winter Season.*?(\d+)¢ (\d+)¢ (\d+)¢", text)
     if etd_w:
-        extracted["E-TOU-D"]["winter"]["onPeak"] = float(etd_w.group(2)) / 100 # 39
-        extracted["E-TOU-D"]["winter"]["offPeak"] = float(etd_w.group(1)) / 100 # 35
+        data["E-TOU-D"]["winter"] = {"onPeak": float(etd_w.group(2))/100, "offPeak": float(etd_w.group(1))/100}
 
-    # 4. E-ELEC Logic
-    # Sequence: 55¢ 33¢ 39¢ (Summer) / 32¢ 28¢ 30¢ (Winter)
+    # 4. E-ELEC (Sequence: 55 33 39 for Summer / 32 28 30 for Winter)
     elec_s = re.search(r"E-ELEC.*?Summer Season.*?(\d+)¢ (\d+)¢ (\d+)¢", text)
     if elec_s:
-        extracted["E-ELEC"]["summer"]["onPeak"] = float(elec_s.group(1)) / 100 # 55
-        extracted["E-ELEC"]["summer"]["offPeak"] = float(elec_s.group(3)) / 100 # 39 (Partial)
-        extracted["E-ELEC"]["summer"]["superOffPeak"] = float(elec_s.group(2)) / 100 # 33
-        
+        data["E-ELEC"]["summer"] = {"onPeak": float(elec_s.group(1))/100, "offPeak": float(elec_s.group(3))/100, "superOffPeak": float(elec_s.group(2))/100}
+    
     elec_w = re.search(r"E-ELEC.*?Winter Season.*?(\d+)¢ (\d+)¢ (\d+)¢", text)
     if elec_w:
-        extracted["E-ELEC"]["winter"]["onPeak"] = float(elec_w.group(1)) / 100 # 32
-        extracted["E-ELEC"]["winter"]["offPeak"] = float(elec_w.group(3)) / 100 # 30
-        extracted["E-ELEC"]["winter"]["superOffPeak"] = float(elec_w.group(2)) / 100 # 28
+        data["E-ELEC"]["winter"] = {"onPeak": float(elec_w.group(1))/100, "offPeak": float(elec_w.group(3))/100, "superOffPeak": float(elec_w.group(2))/100}
 
-    # 5. EV2-A and EV-B Logic (Interleaved Sequence)
-    # The text dump shows: "23¢ 43¢ 54¢ 26¢ 38¢ 38¢ 62¢"
+    # 5. EV2-A & EV-B (Interleaved Sequence: 23 43 54 26 38 38 62)
     ev_s = re.search(r"EV2-A.*?EV-B.*?Summer.*?Summer.*?(\d+)¢ (\d+)¢ (\d+)¢ (\d+)¢ (\d+)¢ (\d+)¢ (\d+)¢", text)
     if ev_s:
-        extracted["EV2-A"]["summer"] = {"superOffPeak": float(ev_s.group(1))/100, "offPeak": float(ev_s.group(2))/100, "onPeak": float(ev_s.group(3))/100}
-        extracted["EV-B"]["summer"] = {"superOffPeak": float(ev_s.group(4))/100, "offPeak": float(ev_s.group(5))/100, "onPeak": float(ev_s.group(7))/100}
+        data["EV2-A"]["summer"] = {"onPeak": float(ev_s.group(3))/100, "offPeak": float(ev_s.group(2))/100, "superOffPeak": float(ev_s.group(1))/100}
+        data["EV-B"]["summer"] = {"onPeak": float(ev_s.group(7))/100, "offPeak": float(ev_s.group(5))/100, "superOffPeak": float(ev_s.group(4))/100}
 
     ev_w = re.search(r"EV2-A.*?EV-B.*?Winter.*?Winter.*?(\d+)¢ (\d+)¢ (\d+)¢ (\d+)¢ (\d+)¢ (\d+)¢ (\d+)¢", text)
     if ev_w:
-        extracted["EV2-A"]["winter"] = {"superOffPeak": float(ev_w.group(1))/100, "offPeak": float(ev_w.group(2))/100, "onPeak": float(ev_w.group(3))/100}
-        extracted["EV-B"]["winter"] = {"superOffPeak": float(ev_w.group(4))/100, "offPeak": float(ev_w.group(5))/100, "onPeak": float(ev_w.group(7))/100}
+        data["EV2-A"]["winter"] = {"onPeak": float(ev_w.group(3))/100, "offPeak": float(ev_w.group(2))/100, "superOffPeak": float(ev_w.group(1))/100}
+        data["EV-B"]["winter"] = {"onPeak": float(ev_w.group(7))/100, "offPeak": float(ev_w.group(5))/100, "superOffPeak": float(ev_w.group(4))/100}
 
-    return extracted
+    return data
 
 def main():
     parser = argparse.ArgumentParser()
@@ -132,7 +119,6 @@ def main():
                 
                 print(f"  {status} {plan:12} ({season:6} {b_type:12}): JSON=${current_val:.5f} | PDF=${rate:.5f}")
 
-                # Using 0.01 threshold to protect precision data
                 if diff > 0.01: 
                     current_json["plans"][plan][season][b_type] = rate
                     updated = True

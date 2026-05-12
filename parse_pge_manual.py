@@ -136,9 +136,17 @@ def main():
             for key, val in pdf_results["rates"].items():
                 season, bin_type = key.split('_')
                 
+                # App Mapping logic
                 json_bin = "onPeak" if bin_type == "on" else "offPeak"
-                if bin_type == "off" and any(x in target_id for x in ["EV", "ELEC"]):
+                
+                # ONLY use superOffPeak for 3-bin technology plans
+                is_3_bin = any(x in target_id for x in ["EV", "ELEC"])
+                if bin_type == "off" and is_3_bin:
                     json_bin = "superOffPeak"
+                
+                # Safety: If it's a 2-bin plan and we think we found a 3rd bin, skip it
+                if bin_type == "mid" and not is_3_bin:
+                    continue
 
                 old_val = data["plans"][target_id][season].get(json_bin, 0)
                 diff = abs(val - old_val)

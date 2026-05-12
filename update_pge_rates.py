@@ -39,9 +39,10 @@ def parse_pge_xlsx(file_path):
     extracted_data = {}
     baseline_credit_found = None
 
-    # Targeted residential markers
-    plan_markers = {
-        "E-1 tiered": ["E1, ESR, ES,  ET"],
+    # We map JSON IDs to very specific substrings expected in the FIRST COLUMN (Index 0)
+    # This prevents description text from accidentally triggering a plan change.
+    plan_identities = {
+        "E-1 tiered": ["Residential Schedules", "E1,"],
         "E-TOU-C": ["Rate Schedule E-TOU-C"],
         "E-TOU-D": ["Rate Schedule E-TOU-D"],
         "E-ELEC": ["Rate Schedule E-ELEC"],
@@ -49,8 +50,8 @@ def parse_pge_xlsx(file_path):
         "EV-B": ["EV, Rate B"]
     }
     
-    # Non-residential prefixes that act as "Boundaries" (Stop collecting data)
-    boundaries = ["EM", "EM-TOU", "Schedule EM", "Schedule ES", "Schedule ET"]
+    # If the first column contains any of these, we STOP tracking the current plan
+    exclusion_markers = ["EM", "EM-TOU", "ES,", "ET,", "Master"]
 
     for sheet_name in xlsx.sheet_names:
         print(f"  > Scanning Sheet: {sheet_name}")
@@ -60,30 +61,29 @@ def parse_pge_xlsx(file_path):
         current_season = "summer"
 
         for idx, row in df.iterrows():
-            # Standardize the row and check the lead cell
+            # Identify the lead cell (Column A)
             first_cell = str(row.iloc[0]).strip()
-            row_vals = [str(item) for item in row.tolist()]
-            row_str = " ".join(row_vals)
+            row_str = " ".join([str(i) for i in row.tolist()])
             
-            # 1. BOUNDARY CHECK: If we hit a Master Metered or other non-res plan, stop tracking
-            if any(first_cell.startswith(b) for b in boundaries) and not first_cell.startswith("E1"):
+            # 1. IDENTIFY PLAN START (Look only at the first column)
+            found_anchor = False
+            for json_id, markers in plan_identities.items():
+                if any(m in first_cell for m in markers):
+                    # SAFETY: Ensure it's not a master metered version (EM)
+                    if not any(ex in first_cell for ex in exclusion_markers) or "E1" in first_cell:
+                        current_plan_id = json_id
+                        found_anchor = True
+                        if current_plan_id not in extracted_data:
+                            extracted_data[current_plan_id] = {"summer": {}, "winter": {}}
+                        print(f"    [Found] {json_id} block start (Row {idx})")
+                        break
+            
+            # 2. BOUNDARY CHECK: If this row is a different plan type (like EM), stop collecting
+            if not found_anchor and any(ex in first_cell for ex in exclusion_markers) and "E1" not in first_cell:
                 if current_plan_id:
-                    print(f"    [Boundary] Exiting {current_plan_id} due to non-residential entry: {first_cell}")
+                    print(f"    [Boundary] Stopping data collection at row {idx} due to non-residential marker: {first_cell}")
                 current_plan_id = None
                 continue
-
-            # 2. IDENTIFY RESIDENTIAL START
-            for json_id, markers in plan_markers.items():
-                if any(m in row_str for m in markers):
-                    # Double check it's not a master metered version of the same plan
-                    if "EM" in first_cell or "Master" in row_str:
-                        continue
-                        
-                    current_plan_id = json_id
-                    if current_plan_id not in extracted_data:
-                        extracted_data[current_plan_id] = {"summer": {}, "winter": {}}
-                    print(f"    [Found] {json_id} block start (Row {idx})")
-                    break 
 
             if not current_plan_id: continue
 
@@ -91,7 +91,7 @@ def parse_pge_xlsx(file_path):
             if "Summer" in row_str: current_season = "summer"
             elif "Winter" in row_str: current_season = "winter"
 
-            # 4. CAPTURE DATA: E-1 TIERED (Col 8/9)
+            # 4. CAPTURE E-1 DATA (Standard Table: Col 8 and 9)
             if current_plan_id == "E-1 tiered":
                 if "Tiered Energy Charges" in row_str:
                     t1 = clean_val(row.iloc[8])
@@ -102,7 +102,7 @@ def parse_pge_xlsx(file_path):
                         print(f"      -> Captured Res E-1: T1={t1}, T2={t2}")
                 continue
 
-            # 5. CAPTURE DATA: TOU (Standard Col 8/9 vs EV/Tech Col 7/8)
+            # 5. CAPTURE TOU DATA (Column mapping varies by Table type)
             is_ev_tech = any(x in current_plan_id for x in ["EV", "ELEC"])
             period_col = 7 if is_ev_tech else 8
             rate_col = 8 if is_ev_tech else 9
@@ -123,7 +123,7 @@ def parse_pge_xlsx(file_path):
                         
                         print(f"      -> {current_plan_id} {current_season} {period_cell}: {rate}")
 
-                    # 6. BASELINE CREDIT (Specifically from residential E-TOU-C rows)
+                    # 6. CAPTURE BASELINE CREDIT (Specifically from Res E-TOU-C)
                     if current_plan_id == "E-TOU-C" and len(row) > 10:
                         b_val = clean_val(row.iloc[10])
                         if b_val < 0: baseline_credit_found = abs(b_val)

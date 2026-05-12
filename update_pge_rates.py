@@ -1,111 +1,96 @@
 import os
-import re
 import json
 import sys
 import requests
-import pdfplumber
+import pandas as pd
 import argparse
 from datetime import datetime
 
 # --- CONFIGURATION ---
-PGE_URL = "https://www.pge.com/assets/pge/docs/account/rate-plans/residential-electric-rate-plan-pricing.pdf"
+XLSX_URL = "https://www.pge.com/assets/rates/tariffs/res-inclu-tou-current.xlsx"
 JSON_FILE = "pge_rates.json"
 
-def download_pdf(url, save_path):
-    print(f"[Network] Downloading PDF from: {url}")
+def download_xlsx(url, save_path):
+    print(f"[Network] Downloading XLSX from: {url}")
     try:
-        response = requests.get(url, timeout=20)
+        # User-agent header often required by PG&E to prevent block
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
         with open(save_path, 'wb') as f:
             f.write(response.content)
+        print(f"[Network] Download complete ({len(response.content)} bytes)")
     except Exception as e:
-        print(f"[Error] Failed to download PDF: {e}")
+        print(f"[Error] Failed to download XLSX: {e}")
         sys.exit(1)
 
-def extract_logic(rates, plan_id):
-    """
-    Intelligently maps raw extracted rates to the correct app bins.
-    High-to-low sorting ensures On-Peak is always the highest.
-    """
-    # Remove duplicates and sort descending (highest price first)
-    unique = sorted(list(set(rates)), reverse=True)
-    if not unique: return None
-
-    # --- 3-BIN PLANS (E-ELEC, EV2-A, EV-B) ---
-    if any(x in plan_id for x in ["ELEC", "EV"]):
-        if len(unique) >= 3:
-            # Sequence: [Highest=On, Middle=Partial/Off, Lowest=Super-Off]
-            return {"onPeak": unique[0], "offPeak": unique[1], "superOffPeak": unique[2]}
-        return {"onPeak": unique[0], "offPeak": unique[-1], "superOffPeak": unique[-1]}
-
-    # --- 2-BIN PLANS (E-1, TOU-C, TOU-D) ---
-    # For TOU-C/D, unique usually contains 4 values (Above and Below baseline).
-    # We take the highest pair for Prediction Accuracy (Above Baseline).
-    if len(unique) >= 2:
-        return {"onPeak": unique[0], "offPeak": unique[1], "superOffPeak": 0.0}
+def parse_pge_xlsx(file_path):
+    print(f"\n[Excel Scan] Processing data...")
     
-    return {"onPeak": unique[0], "offPeak": unique[0], "superOffPeak": 0.0}
-
-def parse_pge_marketing_pdf(pdf_path):
-    print(f"\n[Pattern Scan] Analyzing {os.path.basename(pdf_path)}...")
+    # Load the spreadsheet
+    # We skip rows to get to the actual data table (usually starts around row 3-5)
+    df = pd.read_excel(file_path)
     
-    with pdfplumber.open(pdf_path) as pdf:
-        full_text = " ".join([ (p.extract_text() or "") for p in pdf.pages ])
+    # Standardize column names for searching
+    df.columns = [str(col).strip() for col in df.columns]
     
-    # Flatten text stream
-    text = " ".join(full_text.split())
+    # Logic to find the "Total Bundled" column
+    total_col = None
+    for col in df.columns:
+        if "Total" in col and "Bundled" in col:
+            total_col = col
+            break
+    
+    if not total_col:
+        # Fallback if the column header is different
+        total_col = df.columns[-1] 
+        print(f"  [Note] Guessed total column: {total_col}")
 
-    # Map for mapping the PDF's text markers to your JSON IDs
-    # Using regex segments to find plan-specific chunks
-    plan_segments = {
-        "E-1 tiered": r"(Tiered Rate Plan \(E-1\).*?)Time-of-Use",
-        "E-TOU-C": r"(Time-of-Use \(E-TOU-C\).*?)Time-of-Use \(E-TOU-D\)",
-        "E-TOU-D": r"(Time-of-Use \(E-TOU-D\).*?)Electric Home Rate Plan",
-        "E-ELEC": r"(Electric Home Rate Plan \(E-ELEC\).*?)Electric Vehicle",
-        "EV2-A": r"(Home Charging EV2-A.*?)Electric Vehicle Rate Plan EV-B",
-        "EV-B": r"(Electric Vehicle Rate Plan EV-B.*?)The Electric Home Rate Plan"
+    extracted_data = {}
+
+    # Define the Plan Mapping (JSON ID : SpreadSheet Name)
+    plan_map = {
+        "E-1 tiered": "E-1",
+        "E-TOU-C": "E-TOU-C",
+        "E-TOU-D": "E-TOU-D",
+        "E-ELEC": "E-ELEC",
+        "EV2-A": "EV2-A",
+        "EV-B": "EV-B"
     }
 
-    final_data = {}
-
-    for plan_id, pattern in plan_segments.items():
-        match = re.search(pattern, text)
-        if not match:
-            print(f"  [Warn] Failed to find text bucket for {plan_id}")
-            continue
-            
-        bucket = match.group(1)
+    for json_id, excel_name in plan_map.items():
+        # Filter rows for this specific plan
+        plan_rows = df[df.iloc[:, 0].astype(str).str.contains(excel_name, na=False, case=False)]
         
-        # Split bucket into Summer and Winter chunks
-        s_marker = bucket.find("Summer")
-        w_marker = bucket.find("Winter")
+        if plan_rows.empty:
+            print(f"  [Warn] No data found for {excel_name}")
+            continue
 
-        if s_marker != -1 and w_marker != -1:
-            # Plan has seasonal sections
-            if s_marker < w_marker:
-                s_chunk, w_chunk = bucket[s_marker:w_marker], bucket[w_marker:]
-            else:
-                w_chunk, s_chunk = bucket[w_marker:s_marker], bucket[s_marker:]
+        extracted_data[json_id] = {"summer": {}, "winter": {}}
+
+        for _, row in plan_rows.iterrows():
+            season_str = str(row.iloc[1]).lower() # Usually Col B
+            period_str = str(row.iloc[2]).lower() # Usually Col C
+            rate = float(row[total_col])
+
+            season = "summer" if "summer" in season_str else "winter"
             
-            s_pool = [float(m)/100 for m in re.findall(r"(\d+)¢", s_chunk)]
-            w_pool = [float(m)/100 for m in re.findall(r"(\d+)¢", w_chunk)]
+            # Map TOU Periods to JSON Bins
+            if "peak" in period_str and "off" not in period_str and "part" not in period_str:
+                extracted_data[json_id][season]["onPeak"] = rate
+            elif "part" in period_str or "off-peak" in period_str:
+                # For 2-bin plans, 'Off' goes to offPeak. 
+                # For 3-bin plans, 'Part' goes to offPeak.
+                extracted_data[json_id][season]["offPeak"] = rate
+            elif "super" in period_str:
+                extracted_data[json_id][season]["superOffPeak"] = rate
             
-            # Special case for E-TOU-C Summer: 40¢ is at the start of the header
-            if plan_id == "E-TOU-C":
-                # Look slightly before the Summer marker for the first Off-Peak rate
-                header_rates = [float(m)/100 for m in re.findall(r"(\d+)¢", bucket[:s_marker])]
-                s_pool = header_rates + s_pool
+            # Special Handling for E-1 (Tiered)
+            if json_id == "E-1 tiered":
+                if "tier 1" in period_str: extracted_data[json_id][season]["offPeak"] = rate
+                if "tier 2" in period_str: extracted_data[json_id][season]["onPeak"] = rate
 
-            final_data[plan_id] = {
-                "summer": extract_logic(s_pool, plan_id),
-                "winter": extract_logic(w_pool, plan_id)
-            }
-        else:
-            # Plan is non-seasonal (E-1)
-            pool = [float(m)/100 for m in re.findall(r"(\d+)¢", bucket)]
-            final_data[plan_id] = {"summer": extract_logic(pool, plan_id), "winter": extract_logic(pool, plan_id)}
-
-    return final_data
+    return extracted_data
 
 def main():
     parser = argparse.ArgumentParser()
@@ -114,10 +99,16 @@ def main():
 
     if args.dry_run: print("\n!!! DRY RUN MODE: No files will be modified !!!")
 
-    tmp_pdf = "pge_temp.pdf"
-    download_pdf(PGE_URL, tmp_pdf)
-    new_data = parse_pge_marketing_pdf(tmp_pdf)
+    tmp_xlsx = "pge_rates.xlsx"
+    download_xlsx(XLSX_URL, tmp_xlsx)
     
+    try:
+        new_data = parse_pge_xlsx(tmp_xlsx)
+    except Exception as e:
+        print(f"[Error] Parsing failed: {e}")
+        if os.path.exists(tmp_xlsx): os.remove(tmp_xlsx)
+        return
+
     if not os.path.exists(JSON_FILE):
         print(f"[Error] {JSON_FILE} not found.")
         return
@@ -125,28 +116,24 @@ def main():
     with open(JSON_FILE, 'r') as f:
         current_json = json.load(f)
 
-    print("\n[Comparison Ledger: JSON vs Scraped]")
+    print("\n[Comparison Ledger: JSON vs Excel]")
     updated = False
     
-    for plan in ["E-1 tiered", "E-TOU-C", "E-TOU-D", "E-ELEC", "EV2-A", "EV-B"]:
-        if plan not in new_data: continue
-        
+    for plan, seasons in new_data.items():
+        if plan not in current_json["plans"]: continue
         for season in ["summer", "winter"]:
-            plan_results = new_data[plan].get(season)
-            if not plan_results: continue
-            
             for b_type in ["onPeak", "offPeak", "superOffPeak"]:
-                rate = plan_results.get(b_type, 0)
+                rate = seasons[season].get(b_type, 0)
                 if rate == 0: continue
                 
                 current_val = current_json["plans"][plan][season].get(b_type, 0)
                 diff = abs(rate - current_val)
-                status = "[MATCH]" if diff < 0.00001 else "[CHANGE DETECTED]"
                 
-                print(f"  {status} {plan:12} ({season:6} {b_type:12}): JSON=${current_val:.5f} | PDF=${rate:.5f}")
+                status = "[MATCH]" if diff < 0.00001 else "[CHANGE DETECTED]"
+                print(f"  {status} {plan:12} ({season:6} {b_type:12}): JSON=${current_val:.5f} | XLSX=${rate:.5f}")
 
-                # Update JSON if change > $0.01 (protects precision data)
-                if diff > 0.01: 
+                # Threshold: Since XLSX is high-precision, we update even for small changes (> 0.0001)
+                if diff > 0.0001: 
                     current_json["plans"][plan][season][b_type] = rate
                     updated = True
 
@@ -157,11 +144,11 @@ def main():
                 json.dump(current_json, f, indent=2)
             print("\n>>> Result: Changes committed to JSON.")
         else:
-            print("\n>>> Result: Dry Run complete. All plans successfully matched.")
+            print("\n>>> Result: Dry Run complete. Data is highly precise.")
     else:
-        print("\n>>> Result: No significant changes detected.")
+        print("\n>>> Result: No changes detected.")
 
-    if os.path.exists(tmp_pdf): os.remove(tmp_pdf)
+    if os.path.exists(tmp_xlsx): os.remove(tmp_xlsx)
 
 if __name__ == "__main__":
     main()
